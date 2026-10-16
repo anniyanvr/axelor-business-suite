@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,14 +14,15 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.bankorder.file.directdebit;
 
 import com.axelor.apps.account.db.Umr;
+import com.axelor.apps.account.service.umr.UmrService;
 import com.axelor.apps.bankpayment.db.BankOrder;
 import com.axelor.apps.bankpayment.db.BankOrderLine;
-import com.axelor.apps.bankpayment.exception.IExceptionMessage;
+import com.axelor.apps.bankpayment.exception.BankPaymentExceptionMessage;
 import com.axelor.apps.bankpayment.service.config.BankPaymentConfigService;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.AccountIdentification3Choice;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.BranchAndFinancialInstitutionIdentification3;
@@ -50,20 +52,18 @@ import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.RemittanceInformatio
 import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.SequenceType1Code;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.ServiceLevel2Code;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_008_001_01.ServiceLevel3Choice;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Bank;
 import com.axelor.apps.base.db.BankDetails;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.base.db.Company;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.io.File;
-import java.io.IOException;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
 import javax.xml.datatype.DatatypeFactory;
 
 public class BankOrderFile00800101Service extends BankOrderFile008Service {
@@ -85,14 +85,10 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
    * Generates the XML SEPA Direct Debit file (pain.008.001.01)
    *
    * @return the SEPA Direct Debit file (pain.008.001.01)
-   * @throws JAXBException
-   * @throws IOException
    * @throws AxelorException
-   * @throws DatatypeConfigurationException
    */
   @Override
-  public File generateFile()
-      throws JAXBException, IOException, AxelorException, DatatypeConfigurationException {
+  public File generateFile() throws AxelorException {
     // Creditor
     PartyIdentification8 creditor = factory.createPartyIdentification8();
     creditor.setNm(senderBankDetails.getOwnerName());
@@ -160,11 +156,11 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
    *
    * @param groupHeader the {@link GroupHeader1} to build
    * @param creditor the creditor of the SEPA Direct Debit file
-   * @throws DatatypeConfigurationException
+   * @throws AxelorException
    */
   protected void createGrpHdr(GroupHeader1 groupHeader, PartyIdentification8 creditor)
-      throws DatatypeConfigurationException {
-    DatatypeFactory datatypeFactory = DatatypeFactory.newInstance();
+      throws AxelorException {
+    DatatypeFactory datatypeFactory = DatatypeFactory.newDefaultInstance();
 
     /*
      * Message Identification (mandatory)
@@ -234,13 +230,13 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
    * @param paymentInstructionInformationList the list to add the {@link
    *     PaymentInstructionInformation2} objects into
    * @param creditor the creditor of the SEPA Direct Debit file
-   * @throws DatatypeConfigurationException
+   * @throws AxelorException
    */
   protected void createPmtInf(
       List<PaymentInstructionInformation2> paymentInstructionInformationList,
       PartyIdentification8 creditor)
-      throws AxelorException, DatatypeConfigurationException {
-    DatatypeFactory datatypeFactory = DatatypeFactory.newInstance();
+      throws AxelorException {
+    DatatypeFactory datatypeFactory = DatatypeFactory.newDefaultInstance();
 
     /*
      * Payment Information (mandatory)
@@ -303,7 +299,7 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
       default:
         throw new AxelorException(
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.BANK_ORDER_FILE_UNKNOWN_SEPA_TYPE));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_FILE_UNKNOWN_SEPA_TYPE));
     }
     paymentTypeInformation2.setLclInstrm(localInstrument1Choice);
 
@@ -414,24 +410,30 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
    * @param directDebitTransactionInformation1List the list to add the {@link
    *     DirectDebitTransactionInformation1} objects into
    * @param creditor the creditor of the SEPA Direct Debit file
-   * @throws DatatypeConfigurationException
    * @throws AxelorException
    */
   protected void createDrctDbtTxInf(
       List<DirectDebitTransactionInformation1> directDebitTransactionInformation1List,
       PartyIdentification8 creditor)
-      throws DatatypeConfigurationException, AxelorException {
-    DatatypeFactory datatypeFactory = DatatypeFactory.newInstance();
+      throws AxelorException {
+    DatatypeFactory datatypeFactory = DatatypeFactory.newDefaultInstance();
 
     for (BankOrderLine bankOrderLine : bankOrderLineList) {
 
       BankDetails receiverBankDetails = bankOrderLine.getReceiverBankDetails();
-      Umr receiverUmr = bankOrderLine.getPartner().getActiveUmr();
+      Company company = bankOrderLine.getReceiverCompany();
+      if (company == null && bankOrderLine.getBankOrder() != null) {
+        company = bankOrderLine.getBankOrder().getSenderCompany();
+      }
+
+      Umr receiverUmr = Beans.get(UmrService.class).getActiveUmr(company, receiverBankDetails);
 
       if (receiverUmr == null) {
         throw new AxelorException(
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.DIRECT_DEBIT_MISSING_PARTNER_ACTIVE_UMR));
+            I18n.get(BankPaymentExceptionMessage.DIRECT_DEBIT_MISSING_PARTNER_ACTIVE_UMR),
+            bankOrderLine.getPartner().getFullName(),
+            receiverBankDetails.getFullName());
       }
 
       /*
@@ -471,8 +473,8 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
        * Usage  : Amount must be between 0.01 and 999999999.99
        */
       CurrencyAndAmount currencyAndAmount = factory.createCurrencyAndAmount();
-      currencyAndAmount.setCcy(CURRENCY_CODE);
-      currencyAndAmount.setValue(bankOrderLine.getBankOrderAmount());
+      currencyAndAmount.setCcy(companyCurrency.getCodeISO());
+      currencyAndAmount.setValue(bankOrderLine.getCompanyCurrencyAmount());
       directDebitTransactionInformation1.setInstdAmt(currencyAndAmount);
 
       /*
@@ -627,7 +629,12 @@ public class BankOrderFile00800101Service extends BankOrderFile008Service {
        * Information supplied to enable the matching of an entry with the items that the transfer is intended
        * to settle, eg, commercial invoices in an accounts' receivable system in an unstructured form.
        */
-      remittanceInformation1.getUstrd().add(bankOrderLine.getReceiverReference());
+      remittanceInformation1
+          .getUstrd()
+          .add(
+              bankOrderLine
+                  .getReceiverReference()
+                  .substring(0, Math.min(140, bankOrderLine.getReceiverReference().length() - 1)));
 
       /*
        * Structured   (choice 2 of 2)

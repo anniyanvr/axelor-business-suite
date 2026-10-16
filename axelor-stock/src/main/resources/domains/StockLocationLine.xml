@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <domain-models xmlns="http://axelor.com/xml/ns/domain-models"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models http://axelor.com/xml/ns/domain-models/domain-models_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models https://axelor.com/xml/ns/domain-models/domain-models_8.2.xsd">
 
   <module name="stock" package="com.axelor.apps.stock.db"/>
 
-  <entity name="StockLocationLine" lang="java">
+  <entity name="StockLocationLine">
 
     <many-to-one name="stockLocation" ref="com.axelor.apps.stock.db.StockLocation"
       title="Stock location" readonly="true"/>
@@ -16,6 +16,8 @@
     <decimal name="currentQty" title="Current Qty" precision="20" scale="10" readonly="true"/>
     <decimal name="futureQty" title="Future Qty" precision="20" scale="10" readonly="true"/>
     <decimal name="avgPrice" precision="20" scale="10" readonly="true" title="Average Price"/>
+    <decimal name="stockLocationLineValue" title="Value" transient="true" precision="27"
+      scale="2"/>
     <boolean name="isAvgPriceChanged" transient="true"/>
     <date name="lastFutureStockMoveDate" title="Last Future Stock Move" readonly="true"/>
 

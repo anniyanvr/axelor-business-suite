@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,49 +14,30 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.db.repo;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Partner;
-import com.axelor.apps.base.service.app.AppService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.apps.sale.db.SaleOrder;
-import com.axelor.apps.sale.db.SaleOrderLine;
 import com.axelor.apps.sale.db.repo.SaleOrderManagementRepository;
+import com.axelor.apps.sale.service.saleorder.SaleOrderCopyService;
+import com.axelor.apps.sale.service.saleorder.SaleOrderOrderingStatusService;
 import com.axelor.apps.supplychain.service.AccountingSituationSupplychainService;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.supplychain.service.saleorderline.SaleOrderLineAnalyticService;
 import com.axelor.inject.Beans;
-import java.math.BigDecimal;
+import jakarta.inject.Inject;
+import jakarta.persistence.PersistenceException;
 
 public class SaleOrderSupplychainRepository extends SaleOrderManagementRepository {
 
-  @Override
-  public SaleOrder copy(SaleOrder entity, boolean deep) {
-
-    SaleOrder copy = super.copy(entity, deep);
-
-    if (!Beans.get(AppService.class).isApp("supplychain")) {
-      return copy;
-    }
-
-    copy.setShipmentDate(null);
-    copy.setDeliveryState(DELIVERY_STATE_NOT_DELIVERED);
-    copy.setAmountInvoiced(null);
-    copy.setStockMoveList(null);
-
-    if (copy.getSaleOrderLineList() != null) {
-      for (SaleOrderLine saleOrderLine : copy.getSaleOrderLineList()) {
-        saleOrderLine.setDeliveryState(null);
-        saleOrderLine.setDeliveredQty(null);
-        saleOrderLine.setAmountInvoiced(null);
-        saleOrderLine.setInvoiced(null);
-        saleOrderLine.setInvoicingDate(null);
-        saleOrderLine.setIsInvoiceControlled(null);
-        saleOrderLine.setReservedQty(BigDecimal.ZERO);
-      }
-    }
-
-    return copy;
+  @Inject
+  public SaleOrderSupplychainRepository(
+      SaleOrderCopyService saleOrderCopyService,
+      SaleOrderOrderingStatusService saleOrderOrderingStatusService) {
+    super(saleOrderCopyService, saleOrderOrderingStatusService);
   }
 
   @Override
@@ -70,5 +52,16 @@ public class SaleOrderSupplychainRepository extends SaleOrderManagementRepositor
     } catch (AxelorException e) {
       e.printStackTrace();
     }
+  }
+
+  @Override
+  public SaleOrder save(SaleOrder saleOrder) {
+    try {
+      Beans.get(SaleOrderLineAnalyticService.class).checkAnalyticAxisByCompany(saleOrder);
+    } catch (AxelorException e) {
+      TraceBackService.traceExceptionFromSaveMethod(e);
+      throw new PersistenceException(e.getMessage(), e);
+    }
+    return super.save(saleOrder);
   }
 }

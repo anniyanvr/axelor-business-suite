@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,22 +14,24 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.stock.service;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Address;
 import com.axelor.apps.base.db.CancelReason;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.stock.db.FreightCarrierMode;
 import com.axelor.apps.stock.db.Incoterm;
+import com.axelor.apps.stock.db.LogisticalForm;
+import com.axelor.apps.stock.db.MassStockMove;
 import com.axelor.apps.stock.db.ShipmentMode;
 import com.axelor.apps.stock.db.StockLocation;
 import com.axelor.apps.stock.db.StockMove;
 import com.axelor.apps.stock.db.StockMoveLine;
-import com.axelor.exception.AxelorException;
-import com.google.inject.persist.Transactional;
+import com.axelor.message.db.Template;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -48,7 +51,7 @@ public interface StockMoveService {
    * @param toStockLocation
    * @param realDate
    * @param estimatedDate
-   * @param description
+   * @param note
    * @param shipmentMode
    * @param freightCarrierMode
    * @param carrierPartner
@@ -79,12 +82,6 @@ public interface StockMoveService {
   /**
    * Generic method to create any stock move for internal stock move (without partner information)
    *
-   * @param clientPartner
-   * @param shipmentMode
-   * @param freightCarrierMode
-   * @param carrierPartner
-   * @param forwarderPartner
-   * @param incoterm
    * @param fromAddress
    * @param toAddress
    * @param company
@@ -92,7 +89,7 @@ public interface StockMoveService {
    * @param toStockLocation
    * @param realDate
    * @param estimatedDate
-   * @param description
+   * @param note
    * @param typeSelect
    * @return
    * @throws AxelorException No Stock move sequence defined
@@ -109,6 +106,26 @@ public interface StockMoveService {
       int typeSelect)
       throws AxelorException;
 
+  StockMove createStockMove(
+      Address fromAddress,
+      Address toAddress,
+      Company company,
+      StockLocation fromStockLocation,
+      StockLocation toStockLocation,
+      LocalDate realDate,
+      LocalDate estimatedDate,
+      int typeSelect,
+      MassStockMove massStockMove)
+      throws AxelorException;
+
+  /** To create an internal stock move with one product, mostly for mobile app (API AOS) * */
+  StockMove createStockMoveMobility(
+      StockLocation fromStockLocation,
+      StockLocation toStockLocation,
+      Company company,
+      List<StockMoveLine> stockMoveLines)
+      throws AxelorException;
+
   public void validate(StockMove stockMove) throws AxelorException;
 
   public void goBackToDraft(StockMove stockMove) throws AxelorException;
@@ -119,12 +136,9 @@ public interface StockMoveService {
 
   public String realize(StockMove stockMove, boolean check) throws AxelorException;
 
-  public boolean mustBeSplit(List<StockMoveLine> stockMoveLineList);
+  public boolean mustBeSplit(StockMove stockMove);
 
   public Optional<StockMove> copyAndSplitStockMove(StockMove stockMove) throws AxelorException;
-
-  public Optional<StockMove> copyAndSplitStockMove(
-      StockMove stockMove, List<StockMoveLine> stockMoveLines) throws AxelorException;
 
   public Optional<StockMove> copyAndSplitStockMoveReverse(StockMove stockMove, boolean split)
       throws AxelorException;
@@ -137,14 +151,16 @@ public interface StockMoveService {
 
   void cancel(StockMove stockMove, CancelReason cancelReason) throws AxelorException;
 
-  @Transactional
-  public boolean splitStockMoveLines(
-      StockMove stockMove, List<StockMoveLine> stockMoveLines, BigDecimal splitQty);
+  void checkReversionStatus(StockMove stockMove) throws AxelorException;
 
-  @Transactional
+  void sendSupplierCancellationMail(StockMove stockMove, Template template) throws AxelorException;
+
+  void splitStockMoveLines(
+      StockMove stockMove, List<StockMoveLine> stockMoveLines, BigDecimal splitQty)
+      throws AxelorException;
+
   public void copyQtyToRealQty(StockMove stockMove);
 
-  @Transactional(rollbackOn = {Exception.class})
   public Optional<StockMove> generateReversion(StockMove stockMove) throws AxelorException;
 
   public StockMove splitInto2(
@@ -178,28 +194,9 @@ public interface StockMoveService {
    */
   Map<String, Object> viewDirection(StockMove stockMove) throws AxelorException;
 
-  /**
-   * Print the given stock move.
-   *
-   * @param stockMove
-   * @param lstSelectedMove
-   * @param reportType true if we print a picking order
-   * @return the link to the PDF file
-   * @throws AxelorException
-   */
-  String printStockMove(StockMove stockMove, List<Integer> lstSelectedMove, String reportType)
-      throws AxelorException;
+  void setAvailableStatus(StockMove stockMove) throws AxelorException;
 
-  /**
-   * Update fully spread over logistical forms flag on stock move.
-   *
-   * @param stockMove
-   */
-  void updateFullySpreadOverLogisticalFormsFlag(StockMove stockMove);
-
-  void setAvailableStatus(StockMove stockMove);
-
-  void checkExpirationDates(StockMove stockMove) throws AxelorException;
+  void setAvailableStatusSelect(StockMove stockMove) throws AxelorException;
 
   /**
    * Update editDate of one Outgoing Stock Move
@@ -226,4 +223,37 @@ public interface StockMoveService {
   void updateStocks(StockMove stockMove) throws AxelorException;
 
   void updateProductNetMass(StockMove stockMove) throws AxelorException;
+
+  /**
+   * Update locations from a planned stock move, by copying stock move lines in the stock move then
+   * updating locations.
+   *
+   * @param stockMove
+   * @param initialStatus the initial status of the stock move.
+   * @throws AxelorException
+   */
+  void updateLocations(StockMove stockMove, int initialStatus) throws AxelorException;
+
+  StockLocation getFromStockLocation(StockMove stockMove) throws AxelorException;
+
+  StockLocation getToStockLocation(StockMove stockMove) throws AxelorException;
+
+  void setOrigin(StockMove newStockMove, StockMove oldStockMove);
+
+  void changeLinesFromStockLocation(StockMove stockMove, StockLocation stockLocation);
+
+  void changeLinesToStockLocation(StockMove stockMove, StockLocation stockLocation);
+
+  void checkPrintingSettings(StockMove stockMove) throws AxelorException;
+
+  public Optional<StockMove> generateNewStockMove(StockMove stockMove) throws AxelorException;
+
+  void setMergedStatus(StockMove stockMove);
+
+  StockLocation getToStockLocationOutsource(StockMove stockMove) throws AxelorException;
+
+  void planWithNoSplit(StockMove stockMove) throws AxelorException;
+
+  public void addStockMovesToLogisticalForm(
+      LogisticalForm logisticalForm, List<StockMove> stockMoveList) throws AxelorException;
 }

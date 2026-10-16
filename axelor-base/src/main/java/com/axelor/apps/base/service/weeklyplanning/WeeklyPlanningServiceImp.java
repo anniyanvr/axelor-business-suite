@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,32 +14,39 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.weeklyplanning;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.DayPlanning;
 import com.axelor.apps.base.db.WeeklyPlanning;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.DayPlanningRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.user.UserService;
 import com.axelor.common.ObjectUtils;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.google.inject.persist.Transactional;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
 
   public static final int DEFAULT_SCALE = 2;
+
+  private static final BigDecimal MINUTES_PER_HOUR = BigDecimal.valueOf(60);
 
   public DayOfWeek getFirstDayOfWeek() {
     WeeklyPlanning planning =
@@ -56,21 +64,21 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
     return DayOfWeek.MONDAY;
   }
 
-  private DayOfWeek getDayOfWeek(DayPlanning day) {
-    switch (day.getName()) {
-      case "monday":
+  protected DayOfWeek getDayOfWeek(DayPlanning day) {
+    switch (day.getNameSelect()) {
+      case DayPlanningRepository.MONDAY:
         return DayOfWeek.MONDAY;
-      case "tuesday":
+      case DayPlanningRepository.TUESDAY:
         return DayOfWeek.TUESDAY;
-      case "wednesday":
+      case DayPlanningRepository.WEDNESDAY:
         return DayOfWeek.WEDNESDAY;
-      case "thursday":
+      case DayPlanningRepository.THURSDAY:
         return DayOfWeek.THURSDAY;
-      case "friday":
+      case DayPlanningRepository.FRIDAY:
         return DayOfWeek.FRIDAY;
-      case "saturday":
+      case DayPlanningRepository.SATURDAY:
         return DayOfWeek.SATURDAY;
-      case "sunday":
+      case DayPlanningRepository.SUNDAY:
         return DayOfWeek.SUNDAY;
       default:
         return DayOfWeek.SUNDAY;
@@ -81,10 +89,18 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
   @Transactional
   public WeeklyPlanning initPlanning(WeeklyPlanning planning) {
     String[] dayTab =
-        new String[] {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"};
+        new String[] {
+          DayPlanningRepository.MONDAY,
+          DayPlanningRepository.TUESDAY,
+          DayPlanningRepository.WEDNESDAY,
+          DayPlanningRepository.THURSDAY,
+          DayPlanningRepository.FRIDAY,
+          DayPlanningRepository.SATURDAY,
+          DayPlanningRepository.SUNDAY
+        };
     for (int i = 0; i < dayTab.length; i++) {
       DayPlanning day = new DayPlanning();
-      day.setName(dayTab[i]);
+      day.setNameSelect(dayTab[i]);
       planning.addWeekDay(day);
     }
     return planning;
@@ -95,13 +111,21 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
   public WeeklyPlanning checkPlanning(WeeklyPlanning planning) throws AxelorException {
 
     List<DayPlanning> listDay = planning.getWeekDays();
+    Set<String> dayNameSet = new HashSet<>();
     for (DayPlanning dayPlanning : listDay) {
+
+      if (!dayNameSet.add(dayPlanning.getNameSelect())) {
+        String message =
+            messageInCheckPlanning(BaseExceptionMessage.WEEKLY_PLANNING_5, dayPlanning);
+        throw new AxelorException(TraceBackRepository.CATEGORY_INCONSISTENCY, message);
+      }
 
       if (dayPlanning.getMorningFrom() != null
           && dayPlanning.getMorningTo() != null
           && dayPlanning.getMorningFrom().isAfter(dayPlanning.getMorningTo())) {
 
-        String message = messageInCheckPlanning(IExceptionMessage.WEEKLY_PLANNING_1, dayPlanning);
+        String message =
+            messageInCheckPlanning(BaseExceptionMessage.WEEKLY_PLANNING_1, dayPlanning);
         throw new AxelorException(TraceBackRepository.CATEGORY_INCONSISTENCY, message);
       }
 
@@ -109,7 +133,8 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
           && dayPlanning.getAfternoonFrom() != null
           && dayPlanning.getMorningTo().isAfter(dayPlanning.getAfternoonFrom())) {
 
-        String message = messageInCheckPlanning(IExceptionMessage.WEEKLY_PLANNING_2, dayPlanning);
+        String message =
+            messageInCheckPlanning(BaseExceptionMessage.WEEKLY_PLANNING_2, dayPlanning);
         throw new AxelorException(TraceBackRepository.CATEGORY_INCONSISTENCY, message);
       }
 
@@ -117,7 +142,8 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
           && dayPlanning.getAfternoonTo() != null
           && dayPlanning.getAfternoonFrom().isAfter(dayPlanning.getAfternoonTo())) {
 
-        String message = messageInCheckPlanning(IExceptionMessage.WEEKLY_PLANNING_3, dayPlanning);
+        String message =
+            messageInCheckPlanning(BaseExceptionMessage.WEEKLY_PLANNING_3, dayPlanning);
         throw new AxelorException(TraceBackRepository.CATEGORY_INCONSISTENCY, message);
       }
 
@@ -126,7 +152,8 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
           || (dayPlanning.getAfternoonFrom() == null && dayPlanning.getAfternoonTo() != null)
           || (dayPlanning.getAfternoonTo() == null && dayPlanning.getAfternoonFrom() != null)) {
 
-        String message = messageInCheckPlanning(IExceptionMessage.WEEKLY_PLANNING_4, dayPlanning);
+        String message =
+            messageInCheckPlanning(BaseExceptionMessage.WEEKLY_PLANNING_4, dayPlanning);
         throw new AxelorException(TraceBackRepository.CATEGORY_INCONSISTENCY, message);
       }
     }
@@ -212,25 +239,25 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
     int dayOfWeek = date.getDayOfWeek().getValue();
     switch (dayOfWeek) {
       case 1:
-        return findDayWithName(planning, "monday");
+        return findDayWithName(planning, DayPlanningRepository.MONDAY);
 
       case 2:
-        return findDayWithName(planning, "tuesday");
+        return findDayWithName(planning, DayPlanningRepository.TUESDAY);
 
       case 3:
-        return findDayWithName(planning, "wednesday");
+        return findDayWithName(planning, DayPlanningRepository.WEDNESDAY);
 
       case 4:
-        return findDayWithName(planning, "thursday");
+        return findDayWithName(planning, DayPlanningRepository.THURSDAY);
 
       case 5:
-        return findDayWithName(planning, "friday");
+        return findDayWithName(planning, DayPlanningRepository.FRIDAY);
 
       case 6:
-        return findDayWithName(planning, "saturday");
+        return findDayWithName(planning, DayPlanningRepository.SATURDAY);
 
       case 7:
-        return findDayWithName(planning, "sunday");
+        return findDayWithName(planning, DayPlanningRepository.SUNDAY);
 
       default:
         return findDayWithName(planning, "null");
@@ -240,7 +267,7 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
   public DayPlanning findDayWithName(WeeklyPlanning planning, String name) {
     List<DayPlanning> dayPlanningList = planning.getWeekDays();
     for (DayPlanning dayPlanning : dayPlanningList) {
-      if (dayPlanning.getName().equals(name)) {
+      if (dayPlanning.getNameSelect().equals(name)) {
         return dayPlanning;
       }
     }
@@ -248,11 +275,92 @@ public class WeeklyPlanningServiceImp implements WeeklyPlanningService {
   }
 
   public String messageInCheckPlanning(String message, DayPlanning dayPlanning) {
-    String dayPlanningName = dayPlanning.getName();
+    String dayPlanningName = dayPlanning.getNameSelect();
     return String.format(
         I18n.get(message),
         I18n.get(Character.toUpperCase(dayPlanningName.charAt(0)) + dayPlanningName.substring(1))
             .toLowerCase()); // Because day of week are traduced with a upperCase at the first
     // letter
+  }
+
+  @Override
+  public LocalDateTime computeEndDateTime(
+      LocalDateTime startDateTime, WeeklyPlanning weeklyPlanning, BigDecimal timeInHours) {
+    if (startDateTime == null || weeklyPlanning == null || timeInHours.signum() == 0) {
+      return startDateTime;
+    }
+
+    LocalDateTime endDateTime = startDateTime;
+    BigDecimal workingHours;
+    while (timeInHours.signum() > 0) {
+      workingHours =
+          getWorkingDayValueInHours(
+              weeklyPlanning, startDateTime.toLocalDate(), startDateTime.toLocalTime(), null);
+
+      if (timeInHours.compareTo(workingHours) > 0) {
+        startDateTime =
+            LocalDateTime.of(startDateTime.plusDays(1).toLocalDate(), LocalTime.of(0, 0, 0));
+      } else {
+        endDateTime =
+            LocalDateTime.of(
+                startDateTime.toLocalDate(),
+                getComputedLocalTime(startDateTime, timeInHours, weeklyPlanning));
+      }
+
+      timeInHours = timeInHours.subtract(workingHours);
+    }
+
+    return endDateTime;
+  }
+
+  protected LocalTime getComputedLocalTime(
+      LocalDateTime dateTime, BigDecimal timeInHours, WeeklyPlanning weeklyPlanning) {
+    DayPlanning dayPlanning = this.findDayPlanning(weeklyPlanning, dateTime.toLocalDate());
+
+    if (dayPlanning == null) {
+      return dateTime.toLocalTime();
+    }
+
+    if (!dateTime.toLocalTime().isBefore(dayPlanning.getMorningTo())) {
+      LocalTime startTime = dateTime.toLocalTime();
+      if (dayPlanning.getAfternoonFrom() != null
+          && startTime.isBefore(dayPlanning.getAfternoonFrom())) {
+        startTime = dayPlanning.getAfternoonFrom();
+      }
+      long totalMinutes = timeInHours.multiply(MINUTES_PER_HOUR).longValue();
+      return startTime.plusMinutes(totalMinutes);
+    }
+
+    BigDecimal morningHoursCount =
+        getWorkingDayValueInHours(
+            weeklyPlanning,
+            dateTime.toLocalDate(),
+            dateTime.toLocalTime(),
+            dayPlanning.getMorningTo());
+
+    if (timeInHours.compareTo(morningHoursCount) > 0) {
+      timeInHours = timeInHours.subtract(morningHoursCount);
+      long totalMinutes = timeInHours.multiply(MINUTES_PER_HOUR).longValue();
+      return dayPlanning.getAfternoonFrom().plusMinutes(totalMinutes);
+    } else {
+      long totalMinutes = timeInHours.multiply(MINUTES_PER_HOUR).longValue();
+      return dateTime.toLocalTime().isBefore(dayPlanning.getMorningFrom())
+          ? dayPlanning.getMorningFrom().plusMinutes(totalMinutes)
+          : dateTime.toLocalTime().plusMinutes(totalMinutes);
+    }
+  }
+
+  @Override
+  public boolean isWorkingDay(WeeklyPlanning weeklyPlanning, LocalDate date) {
+    Objects.requireNonNull(weeklyPlanning);
+    Objects.requireNonNull(date);
+
+    var dayPlanning = findDayPlanning(weeklyPlanning, date);
+
+    if (dayPlanning == null) {
+      return false;
+    }
+
+    return dayPlanning.getMorningFrom() != null || dayPlanning.getAfternoonFrom() != null;
   }
 }

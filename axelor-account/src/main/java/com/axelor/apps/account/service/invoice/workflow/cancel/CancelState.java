@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,33 +14,35 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service.invoice.workflow.cancel;
 
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.Move;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
-import com.axelor.apps.account.exception.IExceptionMessage;
-import com.axelor.apps.account.service.BudgetService;
-import com.axelor.apps.account.service.config.AccountConfigService;
+import com.axelor.apps.account.db.repo.InvoiceTermRepository;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
+import com.axelor.apps.account.service.PfpService;
+import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.invoice.workflow.WorkflowInvoice;
 import com.axelor.apps.account.service.move.MoveCancelService;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
+import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 
 public class CancelState extends WorkflowInvoice {
 
   private WorkflowCancelService workflowService;
-  private BudgetService budgetService;
+  protected PfpService pfpService;
 
   @Inject
-  CancelState(WorkflowCancelService workflowService, BudgetService budgetService) {
+  CancelState(WorkflowCancelService workflowService, PfpService pfpService) {
     this.workflowService = workflowService;
-    this.budgetService = budgetService;
+    this.pfpService = pfpService;
   }
 
   @Override
@@ -52,23 +55,19 @@ public class CancelState extends WorkflowInvoice {
 
     workflowService.beforeCancel(invoice);
 
-    if (invoice.getStatusSelect() == InvoiceRepository.STATUS_VENTILATED
-        && invoice.getCompany().getAccountConfig().getAllowCancelVentilatedInvoice()) {
-      cancelMove();
-    }
-
-    setStatus();
-    if (Beans.get(AccountConfigService.class)
-        .getAccountConfig(invoice.getCompany())
-        .getIsManagePassedForPayment()) {
-      setPfpStatus();
-    }
-
-    budgetService.updateBudgetLinesFromInvoice(invoice);
+    updateInvoiceFromCancellation(invoice);
 
     workflowService.afterCancel(invoice);
   }
 
+  protected void updateInvoiceFromCancellation(Invoice invoice) throws AxelorException {
+    setStatus();
+    if (pfpService.isManagePassedForPayment(invoice.getCompany())) {
+      setPfpStatus();
+    }
+  }
+
+  @Transactional
   protected void setStatus() {
 
     invoice.setStatusSelect(InvoiceRepository.STATUS_CANCELED);
@@ -79,7 +78,7 @@ public class CancelState extends WorkflowInvoice {
     if (invoice.getOldMove() != null) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.INVOICE_CANCEL_1));
+          I18n.get(AccountExceptionMessage.INVOICE_CANCEL_1));
     }
 
     Move move = invoice.getMove();
@@ -89,8 +88,12 @@ public class CancelState extends WorkflowInvoice {
     Beans.get(MoveCancelService.class).cancel(move);
   }
 
-  protected void setPfpStatus() {
-    invoice.setPfpValidateStatusSelect(InvoiceRepository.PFP_STATUS_AWAITING);
-    invoice.setDecisionPfpTakenDate(null);
+  protected void setPfpStatus() throws AxelorException {
+    InvoiceToolService.setPfpStatus(invoice);
+    invoice.setDecisionPfpTakenDateTime(null);
+
+    invoice.getInvoiceTermList().stream()
+        .filter(it -> it.getPfpValidateStatusSelect() != InvoiceTermRepository.PFP_STATUS_NO_PFP)
+        .forEach(it -> it.setPfpValidateStatusSelect(InvoiceTermRepository.PFP_STATUS_AWAITING));
   }
 }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.bankorder.file.transfer;
 
@@ -41,16 +42,13 @@ import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_02.PaymentTypeInformati
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_02.RemittanceInformation1;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_02.ServiceLevel1Code;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_02.ServiceLevel2Choice;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Bank;
 import com.axelor.apps.base.db.BankDetails;
-import com.axelor.exception.AxelorException;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.io.File;
-import java.io.IOException;
 import java.time.format.DateTimeFormatter;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
 import javax.xml.datatype.DatatypeFactory;
 
 public class BankOrderFile00100102Service extends BankOrderFileService {
@@ -70,15 +68,10 @@ public class BankOrderFile00100102Service extends BankOrderFileService {
    * Method to create an XML file for SEPA transfer pain.001.001.02
    *
    * @throws AxelorException
-   * @throws DatatypeConfigurationException
-   * @throws JAXBException
-   * @throws IOException
    */
   @Override
-  public File generateFile()
-      throws JAXBException, IOException, AxelorException, DatatypeConfigurationException {
-
-    DatatypeFactory datatypeFactory = DatatypeFactory.newInstance();
+  public File generateFile() throws AxelorException {
+    DatatypeFactory datatypeFactory = DatatypeFactory.newDefaultInstance();
 
     ObjectFactory factory = new ObjectFactory();
 
@@ -147,8 +140,8 @@ public class BankOrderFile00100102Service extends BankOrderFileService {
 
       // Amount
       instdAmt = factory.createCurrencyAndAmount();
-      instdAmt.setCcy(bankOrderCurrency.getCode());
-      instdAmt.setValue(bankOrderLine.getBankOrderAmount());
+      instdAmt.setCcy(companyCurrency.getCodeISO());
+      instdAmt.setValue(bankOrderLine.getCompanyCurrencyAmount());
 
       amt = factory.createAmountType2Choice();
       amt.setInstdAmt(instdAmt);
@@ -186,7 +179,7 @@ public class BankOrderFile00100102Service extends BankOrderFileService {
       }
 
       if (!Strings.isNullOrEmpty(ustrd)) {
-        rmtInf.getUstrd().add(ustrd);
+        rmtInf.getUstrd().add(ustrd.substring(0, Math.min(140, ustrd.length() - 1)));
       }
 
       //			StructuredRemittanceInformation6 strd = factory.createStructuredRemittanceInformation6();

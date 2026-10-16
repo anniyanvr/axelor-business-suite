@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,16 +14,18 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.suppliermanagement.service;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Blocking;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.repo.BlockingRepository;
 import com.axelor.apps.base.db.repo.PriceListRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.BlockingService;
 import com.axelor.apps.base.service.PartnerPriceListService;
 import com.axelor.apps.base.service.app.AppBaseService;
@@ -33,17 +36,16 @@ import com.axelor.apps.purchase.db.repo.PurchaseOrderLineRepository;
 import com.axelor.apps.purchase.db.repo.PurchaseOrderRepository;
 import com.axelor.apps.purchase.service.PurchaseOrderLineService;
 import com.axelor.apps.purchase.service.PurchaseOrderService;
+import com.axelor.apps.purchase.service.SupplierCatalogService;
 import com.axelor.apps.purchase.service.app.AppPurchaseService;
-import com.axelor.apps.stock.service.StockLocationService;
-import com.axelor.apps.supplychain.exception.IExceptionMessage;
+import com.axelor.apps.supplychain.exception.SupplychainExceptionMessage;
+import com.axelor.apps.supplychain.service.PurchaseOrderCreateSupplychainService;
 import com.axelor.apps.supplychain.service.PurchaseOrderSupplychainService;
 import com.axelor.auth.AuthUtils;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,18 +58,40 @@ public class PurchaseOrderSupplierService {
 
   private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  @Inject private PurchaseOrderSupplierLineService purchaseOrderSupplierLineService;
+  protected PurchaseOrderSupplierLineService purchaseOrderSupplierLineService;
+  protected PurchaseOrderSupplychainService purchaseOrderSupplychainService;
+  protected PurchaseOrderCreateSupplychainService purchaseOrderCreateSupplychainService;
+  protected PurchaseOrderService purchaseOrderService;
+  protected PurchaseOrderLineService purchaseOrderLineService;
+  protected PurchaseOrderRepository poRepo;
+  protected SupplierCatalogService supplierCatalogService;
+  protected AppBaseService appBaseService;
+  protected PartnerPriceListService partnerPriceListService;
 
-  @Inject private PurchaseOrderSupplychainService purchaseOrderSupplychainService;
+  @Inject
+  public PurchaseOrderSupplierService(
+      PurchaseOrderSupplierLineService purchaseOrderSupplierLineService,
+      PurchaseOrderSupplychainService purchaseOrderSupplychainService,
+      PurchaseOrderCreateSupplychainService purchaseOrderCreateSupplychainService,
+      PurchaseOrderService purchaseOrderService,
+      PurchaseOrderLineService purchaseOrderLineService,
+      PurchaseOrderRepository poRepo,
+      SupplierCatalogService supplierCatalogService,
+      AppBaseService appBaseService,
+      PartnerPriceListService partnerPriceListService) {
+    this.purchaseOrderSupplierLineService = purchaseOrderSupplierLineService;
+    this.purchaseOrderSupplychainService = purchaseOrderSupplychainService;
+    this.purchaseOrderCreateSupplychainService = purchaseOrderCreateSupplychainService;
+    this.purchaseOrderService = purchaseOrderService;
+    this.purchaseOrderLineService = purchaseOrderLineService;
+    this.poRepo = poRepo;
+    this.supplierCatalogService = supplierCatalogService;
+    this.appBaseService = appBaseService;
+    this.partnerPriceListService = partnerPriceListService;
+  }
 
-  @Inject private PurchaseOrderService purchaseOrderService;
-
-  @Inject private PurchaseOrderLineService purchaseOrderLineService;
-
-  @Inject protected PurchaseOrderRepository poRepo;
-
-  @Transactional
-  public void generateAllSuppliersRequests(PurchaseOrder purchaseOrder) {
+  @Transactional(rollbackOn = {Exception.class})
+  public void generateAllSuppliersRequests(PurchaseOrder purchaseOrder) throws AxelorException {
 
     for (PurchaseOrderLine purchaseOrderLine : purchaseOrder.getPurchaseOrderLineList()) {
 
@@ -83,15 +107,17 @@ public class PurchaseOrderSupplierService {
    * format below.
    *
    * @param purchaseOrderLine
+   * @throws AxelorException
    */
-  @Transactional
-  public void generateSuppliersRequests(PurchaseOrderLine purchaseOrderLine) {
+  @Transactional(rollbackOn = {Exception.class})
+  public void generateSuppliersRequests(PurchaseOrderLine purchaseOrderLine)
+      throws AxelorException {
     this.generateSuppliersRequests(purchaseOrderLine, purchaseOrderLine.getPurchaseOrder());
   }
 
-  @Transactional
+  @Transactional(rollbackOn = {Exception.class})
   public void generateSuppliersRequests(
-      PurchaseOrderLine purchaseOrderLine, PurchaseOrder purchaseOrder) {
+      PurchaseOrderLine purchaseOrderLine, PurchaseOrder purchaseOrder) throws AxelorException {
 
     if (purchaseOrder == null) {
       return;
@@ -111,7 +137,9 @@ public class PurchaseOrderSupplierService {
                 .getBlocking(supplierPartner, company, BlockingRepository.PURCHASE_BLOCKING);
         if (blocking == null) {
           purchaseOrderLine.addPurchaseOrderSupplierLineListItem(
-              purchaseOrderSupplierLineService.create(supplierPartner, supplierCatalog.getPrice()));
+              purchaseOrderSupplierLineService.create(
+                  supplierPartner,
+                  supplierCatalogService.getPurchasePrice(supplierCatalog, company)));
         }
       }
     }
@@ -151,7 +179,7 @@ public class PurchaseOrderSupplierService {
         throw new AxelorException(
             purchaseOrderLine,
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.SO_PURCHASE_1),
+            I18n.get(SupplychainExceptionMessage.SO_PURCHASE_1),
             purchaseOrderLine.getProductName());
       }
 
@@ -174,12 +202,12 @@ public class PurchaseOrderSupplierService {
       throws AxelorException {
 
     LOG.debug(
-        "Création d'une commande fournisseur depuis le devis fournisseur : {} et le fournisseur : {}",
+        "Creation of a purchase order from : {} and the supplier : {}",
         parentPurchaseOrder.getPurchaseOrderSeq(),
         supplierPartner.getFullName());
 
     PurchaseOrder purchaseOrder =
-        purchaseOrderSupplychainService.createPurchaseOrder(
+        purchaseOrderCreateSupplychainService.createPurchaseOrder(
             AuthUtils.getUser(),
             parentPurchaseOrder.getCompany(),
             null,
@@ -187,11 +215,11 @@ public class PurchaseOrderSupplierService {
             null,
             parentPurchaseOrder.getPurchaseOrderSeq(),
             parentPurchaseOrder.getExternalReference(),
-            Beans.get(StockLocationService.class)
-                .getDefaultReceiptStockLocation(parentPurchaseOrder.getCompany()),
-            Beans.get(AppBaseService.class).getTodayDate(parentPurchaseOrder.getCompany()),
-            Beans.get(PartnerPriceListService.class)
-                .getDefaultPriceList(supplierPartner, PriceListRepository.TYPE_PURCHASE),
+            purchaseOrderSupplychainService.getStockLocation(
+                supplierPartner, parentPurchaseOrder.getCompany()),
+            appBaseService.getTodayDate(parentPurchaseOrder.getCompany()),
+            partnerPriceListService.getDefaultPriceList(
+                supplierPartner, PriceListRepository.TYPE_PURCHASE),
             supplierPartner,
             parentPurchaseOrder.getTradingName());
 
@@ -215,7 +243,7 @@ public class PurchaseOrderSupplierService {
       PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException {
 
     LOG.debug(
-        "Création d'une ligne de commande fournisseur pour le produit : {}",
+        "Creation of a purchase order line for the product : {}",
         purchaseOrderLine.getProductName());
 
     return purchaseOrderLineService.createPurchaseOrderLine(

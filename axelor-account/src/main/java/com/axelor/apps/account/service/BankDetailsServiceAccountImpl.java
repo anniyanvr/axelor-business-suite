@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service;
 
@@ -23,22 +24,23 @@ import com.axelor.apps.account.db.AccountingSituation;
 import com.axelor.apps.account.db.PaymentMode;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.db.repo.PaymentModeRepository;
+import com.axelor.apps.account.service.accountingsituation.AccountingSituationService;
 import com.axelor.apps.account.service.app.AppAccountService;
 import com.axelor.apps.account.service.config.AccountConfigService;
+import com.axelor.apps.account.service.invoice.BankDetailsServiceAccount;
 import com.axelor.apps.account.service.payment.PaymentModeService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
-import com.axelor.apps.base.db.repo.PartnerRepository;
 import com.axelor.apps.base.service.BankDetailsServiceImpl;
-import com.axelor.apps.tool.StringTool;
-import com.axelor.exception.AxelorException;
 import com.axelor.inject.Beans;
+import com.axelor.utils.helpers.StringHelper;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
-public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl {
+public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl
+    implements BankDetailsServiceAccount {
 
   /**
    * In this implementation, we use the O2M in payment mode.
@@ -59,36 +61,24 @@ public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl {
         || !appAccountService.getAppBase().getManageMultiBanks()) {
       return super.createCompanyBankDetailsDomain(
           partner, company, paymentMode, operationTypeSelect);
+    } else if (Boolean.TRUE.equals(appAccountService.getAppAccount().getManageFactors())
+        && partner != null
+        && Boolean.TRUE.equals(partner.getFactorizedCustomer())) {
+      return "self.partner.isFactor = true AND self.active = true";
     } else {
+      List<BankDetails> authorizedBankDetails;
 
-      if (partner != null) {
-        partner = Beans.get(PartnerRepository.class).find(partner.getId());
+      if (paymentMode == null) {
+        return "self.id IN (0)";
       }
+      List<AccountManagement> accountManagementList = paymentMode.getAccountManagementList();
 
-      List<BankDetails> authorizedBankDetails = new ArrayList<>();
+      authorizedBankDetails = new ArrayList<>();
 
-      if (partner != null
-          && partner.getFactorizedCustomer()
-          && operationTypeSelect != null
-          && (operationTypeSelect.intValue() == InvoiceRepository.OPERATION_TYPE_CLIENT_SALE
-              || operationTypeSelect.intValue()
-                  == InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND)) {
-
-        authorizedBankDetails = createCompanyBankDetailsDomainFromFactorPartner(company);
-      } else {
-
-        if (paymentMode == null) {
-          return "self.id IN (0)";
-        }
-        List<AccountManagement> accountManagementList = paymentMode.getAccountManagementList();
-
-        authorizedBankDetails = new ArrayList<>();
-
-        for (AccountManagement accountManagement : accountManagementList) {
-          if (accountManagement.getCompany() != null
-              && accountManagement.getCompany().equals(company)) {
-            authorizedBankDetails.add(accountManagement.getBankDetails());
-          }
+      for (AccountManagement accountManagement : accountManagementList) {
+        if (accountManagement.getCompany() != null
+            && accountManagement.getCompany().equals(company)) {
+          authorizedBankDetails.add(accountManagement.getBankDetails());
         }
       }
 
@@ -96,20 +86,10 @@ public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl {
         return "self.id IN (0)";
       } else {
         return "self.id IN ("
-            + StringTool.getIdListString(authorizedBankDetails)
+            + StringHelper.getIdListString(authorizedBankDetails)
             + ") AND self.active = true";
       }
     }
-  }
-
-  private List<BankDetails> createCompanyBankDetailsDomainFromFactorPartner(Company company)
-      throws AxelorException {
-
-    AccountConfig accountConfig = Beans.get(AccountConfigService.class).getAccountConfig(company);
-    List<BankDetails> bankDetailsList = accountConfig.getFactorPartner().getBankDetailsList();
-    return bankDetailsList.stream()
-        .filter(bankDetails -> bankDetails.getActive())
-        .collect(Collectors.toList());
   }
 
   /**
@@ -133,53 +113,41 @@ public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl {
         || !appAccountService.getAppBase().getManageMultiBanks()) {
       return super.getDefaultCompanyBankDetails(company, paymentMode, partner, operationTypeSelect);
     } else {
+      if (paymentMode == null) {
+        return null;
+      }
+
+      BankDetails candidateBankDetails =
+          getDefaultCompanyBankDetailsFromPartner(company, paymentMode, partner);
+
+      List<BankDetails> authorizedBankDetails =
+          Beans.get(PaymentModeService.class).getCompatibleBankDetailsList(paymentMode, company);
 
       if (partner != null
-          && partner.getFactorizedCustomer()
-          && operationTypeSelect != null
-          && (operationTypeSelect.intValue() == InvoiceRepository.OPERATION_TYPE_CLIENT_SALE
-              || operationTypeSelect.intValue()
-                  == InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND)) {
-
+          && Boolean.TRUE.equals(partner.getFactorizedCustomer())
+          && Boolean.TRUE.equals(appAccountService.getAppAccount().getManageFactors())
+          && (Integer.valueOf(InvoiceRepository.OPERATION_TYPE_CLIENT_SALE)
+                  .equals(operationTypeSelect)
+              || Integer.valueOf(InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND)
+                  .equals(operationTypeSelect))) {
         return getDefaultCompanyBankDetailsFromFactorPartner(company);
-      } else {
-        if (paymentMode == null) {
-          return null;
-        }
+      }
 
-        BankDetails candidateBankDetails =
-            getDefaultCompanyBankDetailsFromPartner(company, paymentMode, partner);
-
-        List<BankDetails> authorizedBankDetails =
-            Beans.get(PaymentModeService.class).getCompatibleBankDetailsList(paymentMode, company);
-        if (candidateBankDetails != null
-            && authorizedBankDetails.contains(candidateBankDetails)
-            && candidateBankDetails.getActive()) {
-          return candidateBankDetails;
-        }
-        // we did not find a bank details in accounting situation
-        else {
-          if (authorizedBankDetails.size() == 1) {
-            return authorizedBankDetails.get(0);
-          }
+      if ((partner == null || !partner.getFactorizedCustomer())
+          && candidateBankDetails != null
+          && authorizedBankDetails.contains(candidateBankDetails)
+          && candidateBankDetails.getActive()) {
+        return candidateBankDetails;
+      }
+      // we did not find a bank details in accounting situation
+      else {
+        if (authorizedBankDetails.size() == 1 && authorizedBankDetails.get(0).getActive()) {
+          return authorizedBankDetails.get(0);
         }
       }
+
       return null;
     }
-  }
-
-  private BankDetails getDefaultCompanyBankDetailsFromFactorPartner(Company company)
-      throws AxelorException {
-
-    AccountConfig accountConfig = Beans.get(AccountConfigService.class).getAccountConfig(company);
-    if (accountConfig.getFactorPartner() == null) {
-      return null;
-    }
-    List<BankDetails> bankDetailsList = accountConfig.getFactorPartner().getBankDetailsList();
-    return bankDetailsList.stream()
-        .filter(bankDetails -> bankDetails.getIsDefault())
-        .findFirst()
-        .orElse(null);
   }
 
   /**
@@ -210,5 +178,30 @@ public class BankDetailsServiceAccountImpl extends BankDetailsServiceImpl {
       candidateBankDetails = accountingSituation.getCompanyOutBankDetails();
     }
     return candidateBankDetails;
+  }
+
+  protected BankDetails getDefaultCompanyBankDetailsFromFactorPartner(Company company)
+      throws AxelorException {
+    AccountConfig accountConfig = Beans.get(AccountConfigService.class).getAccountConfig(company);
+    Partner factorPartner = accountConfig.getFactorPartner();
+    if (factorPartner != null) {
+      return factorPartner.getBankDetailsList().stream()
+          .filter(bankDetails -> bankDetails.getIsDefault() && bankDetails.getActive())
+          .findFirst()
+          .orElse(null);
+    }
+    return null;
+  }
+
+  @Override
+  public BankDetails getDefaultBankDetails(
+      Partner partner, Company company, PaymentMode paymentMode) {
+    if (partner != null) {
+      return partner.getBankDetailsList().stream()
+          .filter(bankDetails -> bankDetails.getIsDefault() && bankDetails.getActive())
+          .findFirst()
+          .orElse(null);
+    }
+    return null;
   }
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <object-views xmlns="http://axelor.com/xml/ns/object-views"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/object-views http://axelor.com/xml/ns/object-views/object-views_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/object-views https://axelor.com/xml/ns/object-views/object-views_8.2.xsd">
 
   <grid name="advanced-export-line-grid" title="Advanced export lines"
     model="com.axelor.apps.base.db.AdvancedExportLine">
@@ -17,21 +17,19 @@
     onLoad="action-advanced-export-line-attrs-validate">
     <panel name="mainPanel">
       <field name="metaField" title="Select target field" required="true"
-        onSelect="action-advanced-export-line-attr-change-domain"
+        onSelect="action-advanced-export-line-method-change-domain"
         onChange="action-advanced-export-line-method-fill-title"/>
       <field name="title" required="true"/>
-      <field name="targetField"/>
+      <field name="targetField" required="true"/>
       <field name="orderBy" colSpan="2"/>
       <field name="orderByType" requiredIf="orderBy" hideIf="!orderBy" colSpan="4"/>
       <field name="$isValidate" type="boolean" title="Validate" hidden="true" required="true"
         readonly="true" colSpan="2"/>
       <field name="currentDomain" hidden="true"/>
       <field name="$viewerMessage" showTitle="false" readonly="true" hidden="true">
-        <viewer><![CDATA[
-	              <h4>
-	                  <span class="label label-success" x-translate>Your selection is valid</span>
-	              </h4>
-				]]></viewer>
+        <viewer>
+          <![CDATA[<><Badge bg="success">{_t('Your selection is valid')}</Badge></>]]>
+        </viewer>
       </field>
       <panel name="actionsPanel" colSpan="12">
         <button name="validateFieldSelectionBtn" title="Validate" colSpan="4"
@@ -56,10 +54,9 @@
     <call class="com.axelor.apps.base.web.AdvancedExportController" method="fillTitle"/>
   </action-method>
 
-  <action-attrs name="action-advanced-export-line-attr-change-domain">
-    <attribute name="domain"
-      expr="eval: &quot; self.metaModel.name = '${currentDomain}' &quot;" for="metaField"/>
-  </action-attrs>
+  <action-method name="action-advanced-export-line-method-change-domain">
+    <call class="com.axelor.apps.base.web.AdvancedExportController" method="metaFieldDomain"/>
+  </action-method>
 
   <action-attrs name="action-advanced-export-line-attr-reset">
     <attribute name="value" for="metaField" expr="eval: null"/>

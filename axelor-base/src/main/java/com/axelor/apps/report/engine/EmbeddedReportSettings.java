@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,15 +14,17 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.report.engine;
 
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.ReportingTool;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.base.service.localization.LocaleService;
 import com.axelor.inject.Beans;
 import com.axelor.report.ReportGenerator;
+import com.google.common.base.Strings;
 import java.io.IOException;
 import org.eclipse.birt.core.exception.BirtException;
 
@@ -41,7 +44,15 @@ public class EmbeddedReportSettings extends ReportSettings {
 
       final ReportGenerator generator = Beans.get(ReportGenerator.class);
 
-      this.output = generator.generate(rptdesign, format, params, ReportingTool.getCompanyLocale());
+      String localeCode = (String) this.params.get("__locale");
+      if (Strings.isNullOrEmpty(localeCode)) {
+        localeCode = ReportingTool.getCompanyLocale().toString();
+        this.addParam("__locale", localeCode);
+      }
+
+      this.output =
+          generator.generate(
+              rptdesign, format, params, LocaleService.computeLocaleByLocaleCode(localeCode));
 
       this.attach();
 

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,37 +14,50 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.web;
 
-import com.axelor.apps.ReportFactory;
-import com.axelor.apps.account.db.*;
+import com.axelor.apps.account.db.Invoice;
+import com.axelor.apps.account.db.InvoiceTerm;
+import com.axelor.apps.account.db.Journal;
+import com.axelor.apps.account.db.MoveLine;
+import com.axelor.apps.account.db.PayVoucherDueElement;
+import com.axelor.apps.account.db.PaymentMode;
+import com.axelor.apps.account.db.PaymentVoucher;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.db.repo.PaymentVoucherRepository;
-import com.axelor.apps.account.report.IReport;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
 import com.axelor.apps.account.service.payment.PaymentModeService;
 import com.axelor.apps.account.service.payment.paymentvoucher.PaymentVoucherConfirmService;
+import com.axelor.apps.account.service.payment.paymentvoucher.PaymentVoucherControlService;
 import com.axelor.apps.account.service.payment.paymentvoucher.PaymentVoucherLoadService;
 import com.axelor.apps.account.service.payment.paymentvoucher.PaymentVoucherSequenceService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.repo.PartnerRepository;
 import com.axelor.apps.base.service.BankDetailsService;
+import com.axelor.apps.base.service.exception.TraceBackService;
+import com.axelor.common.ObjectUtils;
+import com.axelor.db.Model;
 import com.axelor.db.mapper.Mapper;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.axelor.meta.schema.actions.ActionView;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
+import com.axelor.rpc.Resource;
 import com.google.common.base.Strings;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 import java.lang.invoke.MethodHandles;
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import org.apache.commons.collections.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,14 +80,14 @@ public class PaymentVoucherController {
   }
 
   // Loading move lines of the selected partner (1st O2M)
-  public void loadMoveLines(ActionRequest request, ActionResponse response) {
+  public void loadInvoiceTerms(ActionRequest request, ActionResponse response) {
 
     PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
 
     try {
       List<PayVoucherDueElement> pvDueElementList =
           Beans.get(PaymentVoucherLoadService.class).searchDueElements(paymentVoucher);
-      response.setValue("payVoucherDueElementList", pvDueElementList);
+      response.setValue("payVoucherDueElementList", toPayVoucherLineMapList(pvDueElementList));
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }
@@ -85,10 +99,18 @@ public class PaymentVoucherController {
     PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
 
     try {
-      Beans.get(PaymentVoucherLoadService.class).loadSelectedLines(paymentVoucher);
-      response.setValue("payVoucherDueElementList", paymentVoucher.getPayVoucherDueElementList());
+      boolean generateAll =
+          Beans.get(PaymentVoucherLoadService.class).loadSelectedLines(paymentVoucher);
       response.setValue(
-          "payVoucherElementToPayList", paymentVoucher.getPayVoucherElementToPayList());
+          "payVoucherDueElementList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherDueElementList()));
+      response.setValue(
+          "payVoucherElementToPayList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherElementToPayList()));
+
+      if (!generateAll) {
+        response.setInfo(I18n.get(AccountExceptionMessage.PAYMENT_VOUCHER_NOT_GENERATE_ALL));
+      }
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }
@@ -101,9 +123,14 @@ public class PaymentVoucherController {
 
     try {
       Beans.get(PaymentVoucherLoadService.class).resetImputation(paymentVoucher);
-      response.setValue("payVoucherDueElementList", paymentVoucher.getPayVoucherDueElementList());
+
       response.setValue(
-          "payVoucherElementToPayList", paymentVoucher.getPayVoucherElementToPayList());
+          "payVoucherDueElementList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherDueElementList()));
+      response.setValue(
+          "payVoucherElementToPayList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherElementToPayList()));
+      response.setValue("remainingAmount", paymentVoucher.getPaidAmount());
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }
@@ -120,8 +147,14 @@ public class PaymentVoucherController {
         Journal journal =
             Beans.get(PaymentModeService.class)
                 .getPaymentModeJournal(paymentMode, company, companyBankDetails);
-        if (journal.getExcessPaymentOk()) {
+        if (journal.getExcessPaymentOk()
+            && CollectionUtils.isEmpty(paymentVoucher.getPayVoucherElementToPayList())) {
           response.setAlert(I18n.get("No items have been selected. Do you want to continue?"));
+        }
+        if (!Beans.get(PaymentVoucherControlService.class).controlMoveAmounts(paymentVoucher)) {
+          response.setError(
+              I18n.get(
+                  "Some move amounts have been changed since the imputation. Please remake the imputation."));
         }
       } catch (Exception e) {
         TraceBackService.trace(response, e);
@@ -141,32 +174,6 @@ public class PaymentVoucherController {
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }
-  }
-
-  public void printPaymentVoucher(ActionRequest request, ActionResponse response)
-      throws AxelorException {
-
-    PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
-
-    String name = I18n.get("Payment voucher");
-    if (!Strings.isNullOrEmpty(paymentVoucher.getReceiptNo())) {
-      name += " " + paymentVoucher.getReceiptNo();
-    }
-
-    String fileLink =
-        ReportFactory.createReport(IReport.PAYMENT_VOUCHER, name + "-${date}")
-            .addParam("PaymentVoucherId", paymentVoucher.getId())
-            .addParam(
-                "Timezone",
-                paymentVoucher.getCompany() != null
-                    ? paymentVoucher.getCompany().getTimezone()
-                    : null)
-            .generate()
-            .getFileLink();
-
-    logger.debug("Printing " + name);
-
-    response.setView(ActionView.define(name).add("html", fileLink).map());
   }
 
   /**
@@ -204,9 +211,114 @@ public class PaymentVoucherController {
 
     try {
       Beans.get(PaymentVoucherLoadService.class).initFromInvoice(paymentVoucher, invoice);
-      response.setValues(paymentVoucher);
+      response.setValue("operationTypeSelect", paymentVoucher.getOperationTypeSelect());
+      response.setValue("partner", paymentVoucher.getPartner());
+      response.setValue("paymentMode", paymentVoucher.getPaymentMode());
+      response.setValue("currency", paymentVoucher.getCurrency());
+      response.setValue("company", paymentVoucher.getCompany());
+      response.setValue("companyBankDetails", paymentVoucher.getCompanyBankDetails());
+      response.setValue("paidAmount", paymentVoucher.getPaidAmount());
+      response.setValue(
+          "payVoucherDueElementList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherDueElementList()));
+      response.setValue(
+          "payVoucherElementToPayList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherElementToPayList()));
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }
+  }
+
+  public void reloadPaymentVoucher(ActionRequest request, ActionResponse response) {
+    try {
+      PaymentVoucher contextPaymentVoucher = request.getContext().asType(PaymentVoucher.class);
+      PaymentVoucher paymentVoucher =
+          Beans.get(PaymentVoucherRepository.class).find(contextPaymentVoucher.getId());
+      if (paymentVoucher != null) {
+
+        Beans.get(PaymentVoucherLoadService.class)
+            .reloadElementToPayList(paymentVoucher, contextPaymentVoucher);
+      }
+      response.setReload(true);
+    } catch (Exception e) {
+      TraceBackService.trace(response, e);
+    }
+  }
+
+  public void setReceiptDisplay(ActionRequest request, ActionResponse response) {
+    try {
+      PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
+      boolean displayReceipt =
+          Beans.get(PaymentVoucherControlService.class).isReceiptDisplayed(paymentVoucher);
+
+      response.setAttr("receiptNo", "hidden", !displayReceipt);
+      response.setAttr("printPaymentVoucherBtn", "hidden", !displayReceipt);
+    } catch (Exception e) {
+      TraceBackService.trace(response, e);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  public void resetAndReloadElementToPay(ActionRequest request, ActionResponse response) {
+    PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
+    Invoice invoice =
+        Mapper.toBean(Invoice.class, (Map<String, Object>) request.getContext().get("_invoice"));
+    invoice = Beans.get(InvoiceRepository.class).find(invoice.getId());
+    try {
+      Beans.get(PaymentVoucherLoadService.class)
+          .resetAndReloadElementToPay(paymentVoucher, invoice);
+      response.setValue(
+          "payVoucherDueElementList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherDueElementList()));
+      response.setValue(
+          "payVoucherElementToPayList",
+          toPayVoucherLineMapList(paymentVoucher.getPayVoucherElementToPayList()));
+    } catch (Exception e) {
+      TraceBackService.trace(response, e);
+    }
+  }
+
+  public void computeSelectedTotals(ActionRequest request, ActionResponse response) {
+    PaymentVoucher paymentVoucher = request.getContext().asType(PaymentVoucher.class);
+    BigDecimal totalSelected = BigDecimal.ZERO;
+
+    if (ObjectUtils.notEmpty(paymentVoucher.getPayVoucherDueElementList())) {
+      totalSelected =
+          paymentVoucher.getPayVoucherDueElementList().stream()
+              .filter(Model::isSelected)
+              .map(PayVoucherDueElement::getAmountRemaining)
+              .reduce(BigDecimal::add)
+              .orElse(BigDecimal.ZERO);
+    }
+
+    response.setValue("$selectedTotal", totalSelected);
+  }
+
+  protected List<Map<String, Object>> toPayVoucherLineMapList(
+      Collection<? extends Model> payVoucherLineList) {
+    if (CollectionUtils.isEmpty(payVoucherLineList)) {
+      return Collections.emptyList();
+    }
+    return payVoucherLineList.stream().map(this::toPayVoucherLineMap).collect(Collectors.toList());
+  }
+
+  @SuppressWarnings("unchecked")
+  protected Map<String, Object> toPayVoucherLineMap(Model payVoucherLine) {
+    Map<String, Object> payVoucherLineMap = Resource.toMap(payVoucherLine);
+    Mapper mapper = Mapper.of(payVoucherLine.getClass());
+
+    Object moveLine = mapper.get(payVoucherLine, "moveLine");
+    Map<String, Object> moveLineMap = (Map<String, Object>) payVoucherLineMap.get("moveLine");
+    if (moveLineMap != null && moveLine instanceof MoveLine) {
+      moveLineMap.put("origin", ((MoveLine) moveLine).getOrigin());
+    }
+
+    Object invoiceTerm = mapper.get(payVoucherLine, "invoiceTerm");
+    Map<String, Object> invoiceTermMap = (Map<String, Object>) payVoucherLineMap.get("invoiceTerm");
+    if (invoiceTermMap != null && invoiceTerm instanceof InvoiceTerm) {
+      invoiceTermMap.put("dueDate", ((InvoiceTerm) invoiceTerm).getDueDate());
+    }
+
+    return payVoucherLineMap;
   }
 }

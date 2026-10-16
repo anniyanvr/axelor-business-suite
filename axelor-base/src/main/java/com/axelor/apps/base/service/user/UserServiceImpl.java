@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,88 +14,85 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.user;
 
 import com.axelor.app.AppSettings;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Address;
-import com.axelor.apps.base.db.AppBase;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
+import com.axelor.apps.base.db.TradingName;
 import com.axelor.apps.base.db.repo.PartnerRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.message.db.Template;
-import com.axelor.apps.message.service.TemplateMessageService;
+import com.axelor.apps.base.service.theme.MetaThemeFetchService;
 import com.axelor.auth.AuthService;
 import com.axelor.auth.AuthUtils;
+import com.axelor.auth.db.Group;
+import com.axelor.auth.db.Permission;
+import com.axelor.auth.db.Role;
 import com.axelor.auth.db.User;
 import com.axelor.auth.db.repo.UserRepository;
-import com.axelor.common.StringUtils;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
+import com.axelor.message.db.Template;
+import com.axelor.message.service.TemplateMessageService;
 import com.axelor.meta.MetaFiles;
 import com.axelor.meta.db.MetaFile;
+import com.axelor.meta.db.MetaPermission;
+import com.axelor.meta.db.MetaPermissionRule;
+import com.axelor.studio.db.AppBase;
 import com.axelor.team.db.Team;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
 import java.security.SecureRandom;
-import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
-import javax.mail.MessagingException;
-import javax.validation.ValidationException;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.math3.exception.TooManyIterationsException;
-import org.apache.shiro.session.Session;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import wslite.json.JSONException;
 
-/** UserService is a class that implement all methods for user information */
 public class UserServiceImpl implements UserService {
 
-  @Inject private UserRepository userRepo;
-  @Inject private MetaFiles metaFiles;
+  protected UserRepository userRepo;
+  protected MetaFiles metaFiles;
+  protected MetaThemeFetchService metaThemeFetchService;
 
-  public static final String DEFAULT_LOCALE = "en";
+  public static final String DEFAULT_LOCALIZATION_CODE = "en_GB";
 
-  private static final String PATTERN_ACCES_RESTRICTION =
+  protected static final String PATTERN_ACCESS_RESTRICTION =
       "(((?=.*[a-z])(?=.*[A-Z])(?=.*\\d))|((?=.*[a-z])(?=.*[A-Z])(?=.*\\W))|((?=.*[a-z])(?=.*\\d)(?=.*\\W))|((?=.*[A-Z])(?=.*\\d)(?=.*\\W))).{8,}";
-  private static final Pattern PATTERN =
+  // Regex used only to generate policy-compliant random passwords. Password validation at
+  // change-time is handled by the platform password policies (AOP 8.2+), configured through
+  // user.password.pattern.value. Falls back to the historical AOS complexity requirement.
+  protected static final Pattern PATTERN =
       Pattern.compile(
           MoreObjects.firstNonNull(
-              AppSettings.get().get("user.password.pattern"), PATTERN_ACCES_RESTRICTION));
+              AppSettings.get().get("user.password.pattern.value"), PATTERN_ACCESS_RESTRICTION));
 
-  private static final String PATTERN_DESCRIPTION =
-      PATTERN.pattern().equals(PATTERN_ACCES_RESTRICTION)
-          ? IExceptionMessage.USER_PATTERN_MISMATCH_ACCES_RESTRICTION
-          : IExceptionMessage.USER_PATTERN_MISMATCH_CUSTOM;
-
-  private static final String GEN_CHARS =
+  protected static final String GEN_CHARS =
       "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-  private static final Pair<Integer, Integer> GEN_BOUNDS = Pair.of(12, 22);
-  private static final int GEN_LOOP_LIMIT = 1000;
-  private static final SecureRandom random = new SecureRandom();
+  protected static final Pair<Integer, Integer> GEN_BOUNDS = Pair.of(12, 22);
+  protected static final int GEN_LOOP_LIMIT = 1000;
+  protected static final SecureRandom random = new SecureRandom();
 
-  private static final Logger logger =
-      LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  @Inject
+  public UserServiceImpl(
+      UserRepository userRepo, MetaFiles metaFiles, MetaThemeFetchService metaThemeFetchService) {
+    this.userRepo = userRepo;
+    this.metaFiles = metaFiles;
+    this.metaThemeFetchService = metaThemeFetchService;
+  }
 
-  /**
-   * Method that return the current connected user
-   *
-   * @return user the current connected user
-   */
   @Override
   public User getUser() {
     User user = null;
@@ -108,11 +106,6 @@ public class UserServiceImpl implements UserService {
     return user;
   }
 
-  /**
-   * Method that return the id of the current connected user
-   *
-   * @return user the id of current connected user
-   */
   @Override
   public Long getUserId() {
 
@@ -125,11 +118,6 @@ public class UserServiceImpl implements UserService {
     return user.getId();
   }
 
-  /**
-   * Method that return the active company of the current connected user
-   *
-   * @return Company the active company
-   */
   @Override
   public Company getUserActiveCompany() {
 
@@ -142,11 +130,6 @@ public class UserServiceImpl implements UserService {
     return user.getActiveCompany();
   }
 
-  /**
-   * Method that return the active company id of the current connected user
-   *
-   * @return Company the active company id
-   */
   @Override
   public Long getUserActiveCompanyId() {
 
@@ -159,39 +142,32 @@ public class UserServiceImpl implements UserService {
     return company.getId();
   }
 
-  /**
-   * Method that return the active team of the current connected user
-   *
-   * @return Team the active team
-   */
   @Override
-  public MetaFile getUserActiveCompanyLogo() {
-
-    final Company company = this.getUserActiveCompany();
+  public MetaFile getUserActiveCompanyLogo(String mode) {
+    User user = AuthUtils.getUser();
+    Company company = user != null ? this.getUserActiveCompany() : null;
 
     if (company == null) {
       return null;
     }
-
-    return company.getLogo();
+    MetaFile logo =
+        switch (metaThemeFetchService.getCurrentThemeLogoMode(user)) {
+          case DARK -> company.getDarkLogo();
+          case LIGHT -> company.getLightLogo();
+          case NONE -> company.getLogo();
+        };
+    return Optional.ofNullable(logo).orElse(company.getLogo());
   }
 
   @Override
-  public String getUserActiveCompanyLogoLink() {
-
-    final Company company = this.getUserActiveCompany();
-
-    if (company == null) {
-      return null;
-    }
-
-    MetaFile logo = company.getLogo();
+  public String getUserActiveCompanyLogoLink(String mode) {
+    MetaFile logo = getUserActiveCompanyLogo(mode);
 
     if (logo == null) {
       return null;
     }
 
-    return metaFiles.getDownloadLink(logo, company);
+    return metaFiles.getDownloadLink(logo, getUserActiveCompany());
   }
 
   @Override
@@ -205,11 +181,6 @@ public class UserServiceImpl implements UserService {
     return Optional.empty();
   }
 
-  /**
-   * Method that return the active team of the current connected user
-   *
-   * @return Team the active team
-   */
   @Override
   public Team getUserActiveTeam() {
 
@@ -222,11 +193,6 @@ public class UserServiceImpl implements UserService {
     return user.getActiveTeam();
   }
 
-  /**
-   * Method that return the active team of the current connected user
-   *
-   * @return Team the active team id
-   */
   @Override
   public Long getUserActiveTeamId() {
 
@@ -239,11 +205,6 @@ public class UserServiceImpl implements UserService {
     return team.getId();
   }
 
-  /**
-   * Method that return the partner of the current connected user
-   *
-   * @return Partner the user partner
-   */
   @Override
   public Partner getUserPartner() {
 
@@ -273,13 +234,15 @@ public class UserServiceImpl implements UserService {
   }
 
   @Override
-  public String getLanguage() {
-
+  public String getLocalizationCode() {
     User user = getUser();
-    if (user != null && !Strings.isNullOrEmpty(user.getLanguage())) {
-      return user.getLanguage();
+    if (user != null && user.getLocalization() != null) {
+      var code = user.getLocalization().getCode();
+      if (!Strings.isNullOrEmpty(code)) {
+        return code;
+      }
     }
-    return DEFAULT_LOCALE;
+    return DEFAULT_LOCALIZATION_CODE;
   }
 
   @Override
@@ -288,59 +251,13 @@ public class UserServiceImpl implements UserService {
   }
 
   @Override
-  public User changeUserPassword(User user, Map<String, Object> values)
-      throws ClassNotFoundException, InstantiationException, IllegalAccessException,
-          MessagingException, IOException, AxelorException {
-    Preconditions.checkNotNull(user, I18n.get("User cannot be null."));
-    Preconditions.checkNotNull(values, I18n.get("User context cannot be null."));
-
-    final String oldPassword = (String) values.get("oldPassword");
-    final String newPassword = (String) values.get("newPassword");
-    final String chkPassword = (String) values.get("chkPassword");
-
-    // no password change
-    if (StringUtils.isBlank(newPassword)) {
-      return user;
-    }
-
-    if (StringUtils.isBlank(oldPassword)) {
-      throw new ValidationException(I18n.get("Current user password is not provided."));
-    }
-
-    if (!newPassword.equals(chkPassword)) {
-      throw new ValidationException(I18n.get("Confirm password doesn't match with new password."));
-    }
-
-    if (!matchPasswordPattern(newPassword)) {
-      throw new ValidationException(I18n.get(PATTERN_DESCRIPTION));
-    }
-
-    final User current = AuthUtils.getUser();
-    final AuthService authService = AuthService.getInstance();
-
-    if (!authService.match(oldPassword, current.getPassword())) {
-      throw new ValidationException(I18n.get("Current user password is wrong."));
-    }
-
-    user.setTransientPassword(newPassword);
-
-    return user;
-  }
-
-  @Override
   @Transactional(rollbackOn = {Exception.class})
   public void processChangedPassword(User user)
-      throws ClassNotFoundException, InstantiationException, IllegalAccessException,
-          MessagingException, IOException, AxelorException, JSONException {
+      throws AxelorException, ClassNotFoundException, IOException {
     Preconditions.checkNotNull(user, I18n.get("User cannot be null."));
 
     try {
       if (!user.getSendEmailUponPasswordChange()) {
-        return;
-      }
-
-      if (user.equals(AuthUtils.getUser())) {
-        logger.debug("User {} changed own password.", user.getCode());
         return;
       }
 
@@ -359,6 +276,9 @@ public class UserServiceImpl implements UserService {
 
     } finally {
       user.setTransientPassword(null);
+      // One-shot: reset the opt-in so a later self-initiated change (e.g. the forced change at
+      // next login after a batch reset) does not re-send the freshly chosen password by email.
+      user.setSendEmailUponPasswordChange(false);
     }
   }
 
@@ -383,55 +303,103 @@ public class UserServiceImpl implements UserService {
   }
 
   @Override
-  public String getPasswordPatternDescription() {
-    return I18n.get(PATTERN_DESCRIPTION);
-  }
-
-  @Override
-  public boolean verifyCurrentUserPassword(String password) {
-
-    if (!StringUtils.isBlank(password)) {
-      final User current = AuthUtils.getUser();
-      final AuthService authService = AuthService.getInstance();
-
-      if (authService.match(password, current.getPassword())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  @Override
-  @Transactional(rollbackOn = {AxelorException.class, Exception.class})
-  public void generateRandomPasswordForUsers(List<Long> userIds) {
+  @Transactional(rollbackOn = {Exception.class})
+  public void generateRandomPasswordForUser(User user) {
     AuthService authService = Beans.get(AuthService.class);
-    LocalDateTime todayDateTime =
-        Beans.get(AppBaseService.class).getTodayDateTime().toLocalDateTime();
-
-    for (Long userId : userIds) {
-      User user = userRepo.find(userId);
-      String password = this.generateRandomPassword().toString();
-      user.setTransientPassword(password);
-      password = authService.encrypt(password);
-      user.setPassword(password);
-      user.setPasswordUpdatedOn(todayDateTime);
-      userRepo.save(user);
-    }
-
-    // Update login date in session so that user changing own password doesn't get logged out.
-    if (userIds.contains(getUserId())) {
-      Session session = AuthUtils.getSubject().getSession();
-      session.setAttribute("loginDate", todayDateTime);
-    }
+    String password = this.generateRandomPassword().toString();
+    // Keep the plain password in a transient field so the notification email
+    // (sent from the repository save hook) can include it, then store it encrypted.
+    user.setTransientPassword(password);
+    user.setPassword(authService.encrypt(password));
+    user.setPasswordUpdatedOn(Beans.get(AppBaseService.class).getTodayDateTime().toLocalDateTime());
   }
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public Partner setUserPartner(Partner partner, User user) {
-    partner.setUser(user);
-    partner.setTeam(user.getActiveTeam());
+  public void setUserPartner(Partner partner, User user) {
     user.setPartner(partner);
     userRepo.save(user);
-    return partner;
+  }
+
+  @Override
+  public TradingName getTradingName() {
+    final User user = getUser();
+
+    if (user == null) {
+      return null;
+    }
+
+    return user.getTradingName();
+  }
+
+  @Override
+  public List<Permission> getPermissions(User user) {
+    List<Permission> permissionList = new ArrayList<>();
+    Optional.ofNullable(user.getPermissions()).ifPresent(permissionList::addAll);
+    Optional.ofNullable(user.getGroup())
+        .map(Group::getPermissions)
+        .ifPresent(permissionList::addAll);
+    Optional.ofNullable(user.getRoles())
+        .map(UserServiceImpl::getPermissions)
+        .ifPresent(permissionList::addAll);
+    Optional.ofNullable(user.getGroup())
+        .map(Group::getRoles)
+        .map(UserServiceImpl::getPermissions)
+        .ifPresent(permissionList::addAll);
+    return permissionList;
+  }
+
+  private static List<Permission> getPermissions(Set<Role> roles) {
+    return roles.stream().map(Role::getPermissions).flatMap(Set::stream).toList();
+  }
+
+  @Override
+  public List<MetaPermissionRule> getMetaPermissionRules(User user) {
+    List<MetaPermissionRule> metaPermissionRuleList = new ArrayList<>();
+    Optional.ofNullable(user.getMetaPermissions())
+        .ifPresent(
+            metaPermissions ->
+                metaPermissionRuleList.addAll(getMetaPermissionRules(metaPermissions)));
+    Optional.ofNullable(user.getGroup())
+        .map(Group::getMetaPermissions)
+        .ifPresent(
+            metaPermissions ->
+                metaPermissionRuleList.addAll(getMetaPermissionRules(metaPermissions)));
+    Optional.ofNullable(user.getRoles())
+        .map(UserServiceImpl::getMetaPermissions)
+        .ifPresent(
+            metaPermissions ->
+                metaPermissionRuleList.addAll(getMetaPermissionRules(metaPermissions)));
+    Optional.ofNullable(user.getGroup())
+        .map(Group::getRoles)
+        .map(UserServiceImpl::getMetaPermissions)
+        .ifPresent(
+            metaPermissions ->
+                metaPermissionRuleList.addAll(getMetaPermissionRules(metaPermissions)));
+    return metaPermissionRuleList;
+  }
+
+  protected static List<MetaPermission> getMetaPermissions(Set<Role> roles) {
+    return roles.stream().map(Role::getMetaPermissions).flatMap(Set::stream).toList();
+  }
+
+  protected static List<MetaPermissionRule> getMetaPermissionRules(
+      Collection<MetaPermission> metaPermissions) {
+    return metaPermissions.stream().map(MetaPermission::getRules).flatMap(List::stream).toList();
+  }
+
+  @Override
+  @Transactional(rollbackOn = Exception.class)
+  public void setActiveCompany(User user, Company company) {
+    user.setActiveCompany(company);
+    user.setTradingName(null);
+    userRepo.save(user);
+  }
+
+  @Override
+  @Transactional(rollbackOn = Exception.class)
+  public void setTradingName(User user, TradingName tradingName) {
+    user.setTradingName(tradingName);
+    userRepo.save(user);
   }
 }

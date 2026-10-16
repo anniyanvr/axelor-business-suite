@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,20 +14,23 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.advanced.imports;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.AdvancedImport;
 import com.axelor.apps.base.db.FileField;
 import com.axelor.apps.base.db.FileTab;
+import com.axelor.apps.base.db.ImportHistory;
 import com.axelor.apps.base.db.repo.FileFieldRepository;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.apps.base.service.imports.listener.ImporterListener;
-import com.axelor.apps.tool.reader.DataReaderFactory;
-import com.axelor.apps.tool.reader.DataReaderService;
-import com.axelor.apps.tool.service.TranslationService;
+import com.axelor.apps.base.utils.ZipExtractionTool;
+import com.axelor.auth.AuthUtils;
 import com.axelor.common.Inflector;
 import com.axelor.common.StringUtils;
+import com.axelor.common.csv.CSVFile;
 import com.axelor.data.XStreamUtils;
 import com.axelor.data.adapter.DataAdapter;
 import com.axelor.data.adapter.JavaTimeAdapter;
@@ -37,8 +41,6 @@ import com.axelor.data.csv.CSVInput;
 import com.axelor.db.Model;
 import com.axelor.db.mapper.Mapper;
 import com.axelor.db.mapper.Property;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.meta.MetaFiles;
 import com.axelor.meta.db.MetaFile;
 import com.axelor.meta.db.MetaModel;
@@ -48,16 +50,15 @@ import com.axelor.meta.db.repo.MetaSelectItemRepository;
 import com.axelor.meta.db.repo.MetaSelectRepository;
 import com.axelor.rpc.Context;
 import com.axelor.rpc.JsonContext;
+import com.axelor.utils.service.TranslationService;
+import com.axelor.utils.service.reader.DataReader;
+import com.axelor.utils.service.reader.DataReaderFactory;
 import com.google.common.base.Strings;
 import com.google.common.io.Files;
-import com.google.inject.Inject;
-import com.opencsv.CSVWriter;
 import com.thoughtworks.xstream.XStream;
+import jakarta.inject.Inject;
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.text.SimpleDateFormat;
@@ -68,10 +69,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
-import java.util.zip.ZipInputStream;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,19 +79,19 @@ import org.slf4j.LoggerFactory;
 public class DataImportServiceImpl implements DataImportService {
 
   private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-  private static final char CSV_SEPRATOR = ';';
-  private static final String INPUT_CALLABLE =
+  protected static final char CSV_SEPRATOR = ';';
+  protected static final String INPUT_CALLABLE =
       "com.axelor.csv.script.ImportAdvancedImport:importGeneral";
-  private static final String BIND_CALLABLE_DATE =
+  protected static final String BIND_CALLABLE_DATE =
       "call:com.axelor.csv.script.ImportDateTime:importDate";
-  private static final String BIND_CALLABLE_DATE_TIME =
+  protected static final String BIND_CALLABLE_DATE_TIME =
       "call:com.axelor.csv.script.ImportDateTime:importDateTime";
-  private static final String BIND_CALLABLE_META_FILE =
+  protected static final String BIND_CALLABLE_META_FILE =
       "call:com.axelor.csv.script.ImportAdvancedImport:importPicture";
-  private static final String MANY_TO_MANY = "ManyToMany";
-  private static final String SPLIT = ".split('\\\\";
-  private static final String AS_LIST = "') as List";
-  private static final String REPLACE_SYMBOL = "$";
+  protected static final String MANY_TO_MANY = "ManyToMany";
+  protected static final String SPLIT = ".split('\\\\";
+  protected static final String AS_LIST = "') as List";
+  protected static final String REPLACE_SYMBOL = "$";
 
   private CSVInput csvInput;
 
@@ -128,7 +128,7 @@ public class DataImportServiceImpl implements DataImportService {
   @Inject private MetaSelectRepository metaSelectRepo;
 
   @Override
-  public MetaFile importData(AdvancedImport advancedImport)
+  public ImportHistory importData(AdvancedImport advancedImport)
       throws IOException, AxelorException, ClassNotFoundException {
 
     adapterMap = new HashMap<String, DataAdapter>();
@@ -138,7 +138,7 @@ public class DataImportServiceImpl implements DataImportService {
 
     String extension = Files.getFileExtension(advancedImport.getImportFile().getFileName());
 
-    DataReaderService reader = dataReaderFactory.getDataReader(extension);
+    DataReader reader = dataReaderFactory.getDataReader(extension);
     reader.initialize(advancedImport.getImportFile(), advancedImport.getFileSeparator());
 
     List<CSVInput> inputs = this.process(reader, advancedImport);
@@ -149,10 +149,10 @@ public class DataImportServiceImpl implements DataImportService {
 
     MetaFile logFile = this.importData(inputs);
     FileUtils.forceDelete(dataDir);
-    return logFile;
+    return addImportHistory(advancedImport, logFile);
   }
 
-  private List<CSVInput> process(DataReaderService reader, AdvancedImport advancedImport)
+  private List<CSVInput> process(DataReader reader, AdvancedImport advancedImport)
       throws AxelorException, IOException, ClassNotFoundException {
 
     String[] sheets = reader.getSheetNames();
@@ -175,45 +175,46 @@ public class DataImportServiceImpl implements DataImportService {
       csvInput = this.createCSVInput(fileTab, fileName);
       ifList = new ArrayList<String>();
 
-      try (CSVWriter csvWriter =
-          new CSVWriter(new FileWriter(new File(dataDir, fileName)), CSV_SEPRATOR)) {
+      File tempFile = new File(dataDir, fileName);
+      CSVFile csvFormat =
+          CSVFile.DEFAULT.withDelimiter(CSV_SEPRATOR).withQuoteAll().withFirstRecordAsHeader();
+      CSVPrinter printer = csvFormat.write(tempFile);
 
-        int totalLines = reader.getTotalLines(fileTab.getName());
-        if (totalLines == 0) {
+      int totalLines = reader.getTotalLines(fileTab.getName());
+      if (totalLines == 0) {
+        continue;
+      }
+
+      Mapper mapper = advancedImportService.getMapper(fileTab.getMetaModel().getFullName());
+      List<String[]> allLines = new ArrayList<String[]>();
+      int startIndex = isConfig ? 1 : linesToIgnore;
+
+      String[] row = reader.read(fileTab.getName(), startIndex, 0);
+      String[] headers = this.createHeader(row, fileTab, isConfig, mapper);
+      allLines.add(headers);
+
+      int tabConfigRowCount = 0;
+      if (isTabConfig) {
+        String objectRow[] = reader.read(fileTab.getName(), 0, 0);
+        tabConfigRowCount =
+            advancedImportService.getTabConfigRowCount(
+                fileTab.getName(), reader, totalLines, objectRow);
+      }
+      startIndex =
+          isConfig
+              ? tabConfigRowCount + 3
+              : fileTab.getAdvancedImport().getIsHeader() ? linesToIgnore + 1 : linesToIgnore;
+
+      for (int line = startIndex; line < totalLines; line++) {
+        String[] dataRow = reader.read(fileTab.getName(), line, row.length);
+        if (dataRow == null || Arrays.stream(dataRow).allMatch(StringUtils::isBlank)) {
           continue;
         }
-
-        Mapper mapper = advancedImportService.getMapper(fileTab.getMetaModel().getFullName());
-        List<String[]> allLines = new ArrayList<String[]>();
-        int startIndex = isConfig ? 1 : linesToIgnore;
-
-        String[] row = reader.read(fileTab.getName(), startIndex, 0);
-        String[] headers = this.createHeader(row, fileTab, isConfig, mapper);
-        allLines.add(headers);
-
-        int tabConfigRowCount = 0;
-        if (isTabConfig) {
-          String objectRow[] = reader.read(fileTab.getName(), 0, 0);
-          tabConfigRowCount =
-              advancedImportService.getTabConfigRowCount(
-                  fileTab.getName(), reader, totalLines, objectRow);
-        }
-        startIndex =
-            isConfig
-                ? tabConfigRowCount + 3
-                : fileTab.getAdvancedImport().getIsHeader() ? linesToIgnore + 1 : linesToIgnore;
-
-        for (int line = startIndex; line < totalLines; line++) {
-          String[] dataRow = reader.read(fileTab.getName(), line, row.length);
-          if (dataRow == null || Arrays.stream(dataRow).allMatch(StringUtils::isBlank)) {
-            continue;
-          }
-          String[] data = this.createData(dataRow, fileTab, isConfig, mapper);
-          allLines.add(data);
-        }
-        csvWriter.writeAll(allLines);
-        csvWriter.flush();
+        String[] data = this.createData(dataRow, fileTab, isConfig, mapper);
+        allLines.add(data);
       }
+      printer.printRecords(allLines);
+      printer.close();
 
       inputList.add(csvInput);
       importContext.put("ifConditions" + fileTab.getId(), ifList);
@@ -227,7 +228,7 @@ public class DataImportServiceImpl implements DataImportService {
     return inputList;
   }
 
-  private void initializeVariables() {
+  protected void initializeVariables() {
     parentBindMap = new HashMap<>();
     subBindMap = new HashMap<>();
     fullFieldName = null;
@@ -341,14 +342,14 @@ public class DataImportServiceImpl implements DataImportService {
     return dataList.stream().toArray(String[]::new);
   }
 
-  private void checkAndWriteData(
+  protected void checkAndWriteData(
       String dataCell, MetaModel model, FileField fileField, Mapper mapper, List<String> dataList)
       throws ClassNotFoundException {
 
     Property parentProp = mapper.getProperty(fileField.getImportField().getName());
 
     if (Strings.isNullOrEmpty(fileField.getSubImportField())) {
-      if (!Strings.isNullOrEmpty(parentProp.getSelection())) {
+      if (parentProp != null && !Strings.isNullOrEmpty(parentProp.getSelection())) {
         this.writeSelectionData(
             parentProp.getSelection(), dataCell, fileField.getForSelectUse(), dataList);
 
@@ -363,7 +364,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private void checkSubFieldAndWriteData(
+  protected void checkSubFieldAndWriteData(
       String[] subFields,
       int index,
       Property parentProp,
@@ -392,7 +393,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private void writeSelectionData(
+  protected void writeSelectionData(
       String selection, String dataCell, int forSelectUse, List<String> dataList) {
 
     String value = this.getSelectionValue(selection, dataCell, forSelectUse);
@@ -402,7 +403,7 @@ public class DataImportServiceImpl implements DataImportService {
     dataList.add(value);
   }
 
-  private String getSelectionValue(String selection, String value, int forSelectUse) {
+  protected String getSelectionValue(String selection, String value, int forSelectUse) {
 
     if (forSelectUse != FileFieldRepository.SELECT_USE_VALUES) {
       String title = null;
@@ -433,12 +434,13 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private CSVInput createCSVInput(FileTab fileTab, String fileName) {
+  protected CSVInput createCSVInput(FileTab fileTab, String fileName) {
     boolean update = false;
     String searchCall = fileTab.getSearchCall();
 
-    if (CollectionUtils.isNotEmpty(fileTab.getSearchFieldSet())
-        || StringUtils.notBlank(searchCall)) {
+    if (fileTab.getImportType() != FileFieldRepository.IMPORT_TYPE_FIND_NEW
+        && (CollectionUtils.isNotEmpty(fileTab.getSearchFieldSet())
+            || StringUtils.notBlank(searchCall))) {
       update = true;
     }
 
@@ -520,7 +522,7 @@ public class DataImportServiceImpl implements DataImportService {
     return allBindings;
   }
 
-  private void createCSVSubBinding(
+  protected void createCSVSubBinding(
       String[] subFields,
       int index,
       String column,
@@ -602,7 +604,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private void createBindForNotMatchWithFile(
+  protected void createBindForNotMatchWithFile(
       String column,
       int importType,
       CSVBind dummyBind,
@@ -622,7 +624,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private void createBindForMatchWithFile(
+  protected void createBindForMatchWithFile(
       String column,
       int importType,
       String expression,
@@ -652,7 +654,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private void setSearch(
+  protected void setSearch(
       String column, String field, FileField fileField, CSVBind bind, boolean isSameParentExist) {
 
     int importType = fileField.getImportType();
@@ -684,7 +686,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
   }
 
-  private String setExpression(String column, FileField fileField, Property prop) {
+  protected String setExpression(String column, FileField fileField, Property prop) {
 
     String expr = fileField.getExpression();
     String relationship = fileField.getRelationship();
@@ -729,7 +731,7 @@ public class DataImportServiceImpl implements DataImportService {
     return expression;
   }
 
-  private String createExpression(String expr, String type, Property prop, int forSelectUse) {
+  protected String createExpression(String expr, String type, Property prop, int forSelectUse) {
     String expression = null;
 
     switch (type) {
@@ -764,7 +766,7 @@ public class DataImportServiceImpl implements DataImportService {
     return expression;
   }
 
-  private String convertExpression(String expr, String type, String column) {
+  protected String convertExpression(String expr, String type, String column) {
     String expression = null;
     switch (type) {
       case ValidatorService.INTEGER:
@@ -796,7 +798,7 @@ public class DataImportServiceImpl implements DataImportService {
     return expression;
   }
 
-  private String getAdapter(String type, String dateFormat) {
+  protected String getAdapter(String type, String dateFormat) {
     String adapter = null;
 
     switch (type) {
@@ -823,7 +825,7 @@ public class DataImportServiceImpl implements DataImportService {
     return adapter;
   }
 
-  private DataAdapter createAdapter(String typeName, String format) {
+  protected DataAdapter createAdapter(String typeName, String format) {
     DataAdapter adapter = adapterMap.get(format);
     if (adapter == null) {
       adapter =
@@ -835,7 +837,7 @@ public class DataImportServiceImpl implements DataImportService {
     return adapter;
   }
 
-  private CSVBind createCSVBind(
+  protected CSVBind createCSVBind(
       String column,
       String field,
       String search,
@@ -856,7 +858,7 @@ public class DataImportServiceImpl implements DataImportService {
     return bind;
   }
 
-  private String createDataFileName(FileTab fileTab) {
+  protected String createDataFileName(FileTab fileTab) {
     String fileName = null;
     MetaModel model = fileTab.getMetaModel();
     Long fileTabId = fileTab.getId();
@@ -871,41 +873,17 @@ public class DataImportServiceImpl implements DataImportService {
     return fileName;
   }
 
-  private void processAttachments(MetaFile attachments) throws ZipException, IOException {
+  protected void processAttachments(MetaFile attachments) throws ZipException, IOException {
 
     if (dataDir.isDirectory() && dataDir.list().length == 0) {
       return;
     }
 
     File attachmentFile = MetaFiles.getPath(attachments).toFile();
-    try (ZipInputStream zis = new ZipInputStream(new FileInputStream(attachmentFile))) {
-      ZipEntry ze;
-      byte[] buffer = new byte[1024];
-
-      while ((ze = zis.getNextEntry()) != null) {
-        String fileName = ze.getName();
-        File extractFile = new File(dataDir, fileName);
-
-        if (ze.isDirectory()) {
-          extractFile.mkdirs();
-          continue;
-        } else {
-          extractFile.getParentFile().mkdirs();
-          extractFile.createNewFile();
-        }
-
-        try (FileOutputStream fos = new FileOutputStream(extractFile)) {
-          int len;
-          while ((len = zis.read(buffer)) > 0) {
-            fos.write(buffer, 0, len);
-          }
-        }
-        zis.closeEntry();
-      }
-    }
+    ZipExtractionTool.extractZipFile(attachmentFile, dataDir);
   }
 
-  private MetaFile importData(List<CSVInput> inputs) throws IOException {
+  protected MetaFile importData(List<CSVInput> inputs) throws IOException {
     if (CollectionUtils.isEmpty(inputs)) {
       return null;
     }
@@ -929,13 +907,13 @@ public class DataImportServiceImpl implements DataImportService {
     return null;
   }
 
-  private void setImportIf(Property prop, CSVBind bind, String column) {
+  protected void setImportIf(Property prop, CSVBind bind, String column) {
     if (prop.isRequired()) {
       bind.setCondition(column.toString() + "!= null && !" + column.toString() + ".empty");
     }
   }
 
-  private MetaFile createImportLogFile(ImporterListener listener) throws IOException {
+  protected MetaFile createImportLogFile(ImporterListener listener) throws IOException {
 
     MetaFile logMetaFile =
         metaFiles.upload(
@@ -958,5 +936,13 @@ public class DataImportServiceImpl implements DataImportService {
     _map.put("context", context);
     _map.put("jsonContext", jsonContext);
     return _map;
+  }
+
+  protected ImportHistory addImportHistory(AdvancedImport advancedImport, MetaFile logFile) {
+    ImportHistory importHistory =
+        new ImportHistory(AuthUtils.getUser(), advancedImport.getImportFile());
+    importHistory.setLogMetaFile(logFile);
+    importHistory.setAdvanceImport(advancedImport);
+    return importHistory;
   }
 }

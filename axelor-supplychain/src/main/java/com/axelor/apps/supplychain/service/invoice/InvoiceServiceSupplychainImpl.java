@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service.invoice;
 
@@ -24,28 +25,43 @@ import com.axelor.apps.account.db.repo.InvoiceLineRepository;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.service.app.AppAccountService;
 import com.axelor.apps.account.service.config.AccountConfigService;
+import com.axelor.apps.account.service.invoice.InvoiceCategoryService;
 import com.axelor.apps.account.service.invoice.InvoiceLineService;
 import com.axelor.apps.account.service.invoice.InvoiceServiceImpl;
+import com.axelor.apps.account.service.invoice.InvoiceTermFilterService;
+import com.axelor.apps.account.service.invoice.InvoiceTermPfpService;
+import com.axelor.apps.account.service.invoice.InvoiceTermPfpToolService;
+import com.axelor.apps.account.service.invoice.InvoiceTermService;
+import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.invoice.factory.CancelFactory;
 import com.axelor.apps.account.service.invoice.factory.ValidateFactory;
 import com.axelor.apps.account.service.invoice.factory.VentilateFactory;
+import com.axelor.apps.account.service.invoice.print.InvoicePrintService;
 import com.axelor.apps.account.service.move.MoveToolService;
+import com.axelor.apps.account.service.note.InvoiceNoteService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Currency;
 import com.axelor.apps.base.service.PartnerService;
-import com.axelor.apps.base.service.alarm.AlarmEngineService;
+import com.axelor.apps.base.service.app.AppBaseService;
+import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.sale.db.AdvancePayment;
 import com.axelor.apps.sale.db.SaleOrder;
+import com.axelor.apps.stock.db.StockMove;
+import com.axelor.apps.stock.db.repo.StockMoveRepository;
 import com.axelor.apps.supplychain.db.Timetable;
 import com.axelor.apps.supplychain.db.repo.TimetableRepository;
+import com.axelor.apps.supplychain.service.IntercoService;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
 import com.axelor.common.ObjectUtils;
 import com.axelor.db.EntityHelper;
 import com.axelor.db.Query;
-import com.axelor.exception.AxelorException;
+import com.axelor.dms.db.repo.DMSFileRepository;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
+import com.axelor.message.service.TemplateMessageService;
+import com.axelor.utils.helpers.WrappingHelper;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,37 +70,62 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.apache.commons.collections.CollectionUtils;
 
 public class InvoiceServiceSupplychainImpl extends InvoiceServiceImpl
     implements InvoiceServiceSupplychain {
 
   protected InvoiceLineRepository invoiceLineRepo;
+  protected IntercoService intercoService;
+  protected StockMoveRepository stockMoveRepository;
 
   @Inject
   public InvoiceServiceSupplychainImpl(
       ValidateFactory validateFactory,
       VentilateFactory ventilateFactory,
       CancelFactory cancelFactory,
-      AlarmEngineService<Invoice> alarmEngineService,
       InvoiceRepository invoiceRepo,
+      DMSFileRepository dmsFileRepository,
       AppAccountService appAccountService,
       PartnerService partnerService,
       InvoiceLineService invoiceLineService,
       AccountConfigService accountConfigService,
       MoveToolService moveToolService,
-      InvoiceLineRepository invoiceLineRepo) {
+      InvoiceTermService invoiceTermService,
+      InvoiceTermPfpService invoiceTermPfpService,
+      AppBaseService appBaseService,
+      TemplateMessageService templateMessageService,
+      InvoiceTermFilterService invoiceTermFilterService,
+      InvoicePrintService invoicePrintService,
+      InvoiceTermPfpToolService invoiceTermPfpToolService,
+      InvoiceCategoryService invoiceCategoryService,
+      InvoiceNoteService invoiceNoteService,
+      InvoiceLineRepository invoiceLineRepo,
+      IntercoService intercoService,
+      StockMoveRepository stockMoveRepository) {
     super(
         validateFactory,
         ventilateFactory,
         cancelFactory,
-        alarmEngineService,
         invoiceRepo,
+        dmsFileRepository,
         appAccountService,
         partnerService,
         invoiceLineService,
         accountConfigService,
-        moveToolService);
+        moveToolService,
+        invoiceTermService,
+        invoiceTermPfpService,
+        appBaseService,
+        templateMessageService,
+        invoiceTermFilterService,
+        invoicePrintService,
+        invoiceTermPfpToolService,
+        invoiceCategoryService,
+        invoiceNoteService);
     this.invoiceLineRepo = invoiceLineRepo;
+    this.intercoService = intercoService;
+    this.stockMoveRepository = stockMoveRepository;
   }
 
   @Override
@@ -92,6 +133,15 @@ public class InvoiceServiceSupplychainImpl extends InvoiceServiceImpl
   public void ventilate(Invoice invoice) throws AxelorException {
     super.ventilate(invoice);
 
+    // cannot be called in WorkflowVentilationService since we need printedPDF
+    if (invoice.getInterco()) {
+      intercoService.generateIntercoInvoice(invoice);
+    }
+
+    updateTimetable(invoice);
+  }
+
+  protected void updateTimetable(Invoice invoice) {
     TimetableRepository timeTableRepo = Beans.get(TimetableRepository.class);
 
     List<Timetable> timetableList =
@@ -101,6 +151,24 @@ public class InvoiceServiceSupplychainImpl extends InvoiceServiceImpl
       timetable.setInvoiced(true);
       timeTableRepo.save(timetable);
     }
+
+    int operationTypeSelect = invoice.getOperationTypeSelect();
+    if (operationTypeSelect == InvoiceRepository.OPERATION_TYPE_SUPPLIER_REFUND
+        || operationTypeSelect == InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND) {
+      Invoice originalInvoice = invoice.getOriginalInvoice();
+      if (originalInvoice != null) {
+        Timetable timetable =
+            timeTableRepo
+                .all()
+                .filter("self.invoice = :invoice")
+                .bind("invoice", originalInvoice)
+                .fetchOne();
+        if (timetable != null) {
+          timetable.setInvoiced(false);
+          timetable.setInvoice(null);
+        }
+      }
+    }
   }
 
   @Override
@@ -109,32 +177,74 @@ public class InvoiceServiceSupplychainImpl extends InvoiceServiceImpl
     if (!Beans.get(AppSupplychainService.class).isApp("supplychain")) {
       return super.getDefaultAdvancePaymentInvoice(invoice);
     }
-
+    Set<Long> saleOrderIds = new HashSet<>();
+    Set<Long> purchaseOrderIds = new HashSet<>();
     SaleOrder saleOrder = invoice.getSaleOrder();
+    PurchaseOrder purchaseOrder = invoice.getPurchaseOrder();
+    Set<StockMove> stockMoveSet = invoice.getStockMoveSet();
     Company company = invoice.getCompany();
     Currency currency = invoice.getCurrency();
-    if (company == null || saleOrder == null) {
+    if (company == null
+        || (saleOrder == null && purchaseOrder == null && CollectionUtils.isEmpty(stockMoveSet))) {
       return super.getDefaultAdvancePaymentInvoice(invoice);
     }
     boolean generateMoveForInvoicePayment =
-        Beans.get(AccountConfigService.class)
-            .getAccountConfig(company)
-            .getGenerateMoveForInvoicePayment();
+        accountConfigService.getAccountConfig(company).getGenerateMoveForInvoicePayment();
+
+    if (CollectionUtils.isNotEmpty(stockMoveSet)) {
+      saleOrderIds.addAll(
+          stockMoveSet.stream()
+              .flatMap(
+                  move ->
+                      WrappingHelper.wrap(move.getSaleOrderSet()).stream().map(SaleOrder::getId))
+              .collect(Collectors.toList()));
+      purchaseOrderIds.addAll(
+          stockMoveSet.stream()
+              .flatMap(
+                  move ->
+                      WrappingHelper.wrap(move.getPurchaseOrderSet()).stream()
+                          .map(PurchaseOrder::getId))
+              .collect(Collectors.toList()));
+    }
+
+    if (saleOrder != null) {
+      saleOrderIds.add(saleOrder.getId());
+    }
+
+    if (purchaseOrder != null) {
+      purchaseOrderIds.add(purchaseOrder.getId());
+    }
 
     String filter = writeGeneralFilterForAdvancePayment();
-    filter += " AND self.saleOrder = :_saleOrder";
+    if (CollectionUtils.isNotEmpty(saleOrderIds)) {
+      filter += " AND self.saleOrder.id IN :_saleOrderList";
+    }
+
+    if (CollectionUtils.isNotEmpty(purchaseOrderIds)) {
+      filter += " AND self.purchaseOrder.id IN :_purchaseOrderList";
+    }
 
     if (!generateMoveForInvoicePayment) {
       filter += " AND self.currency = :_currency";
     }
     Query<Invoice> query =
-        Beans.get(InvoiceRepository.class)
+        invoiceRepo
             .all()
             .filter(filter)
             .bind("_status", InvoiceRepository.STATUS_VALIDATED)
             .bind("_operationSubType", InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE)
-            .bind("_saleOrder", saleOrder);
+            .bind(
+                "_operationType",
+                InvoiceToolService.isPurchase(invoice)
+                    ? InvoiceRepository.OPERATION_TYPE_SUPPLIER_PURCHASE
+                    : InvoiceRepository.OPERATION_TYPE_CLIENT_SALE);
+    if (CollectionUtils.isNotEmpty(saleOrderIds)) {
+      query.bind("_saleOrderList", saleOrderIds);
+    }
 
+    if (CollectionUtils.isNotEmpty(purchaseOrderIds)) {
+      query.bind("_purchaseOrderList", purchaseOrderIds);
+    }
     if (!generateMoveForInvoicePayment) {
       if (currency == null) {
         return new HashSet<>();
@@ -272,5 +382,34 @@ public class InvoiceServiceSupplychainImpl extends InvoiceServiceImpl
       }
     }
     return invoice;
+  }
+
+  @Transactional
+  @Override
+  public void swapStockMoveInvoices(List<Invoice> invoiceList, Invoice newInvoice) {
+    for (Invoice invoice : invoiceList) {
+      List<StockMove> stockMoveList =
+          stockMoveRepository
+              .all()
+              .filter(":invoiceId in (self.invoiceSet.id)")
+              .bind("invoiceId", invoice.getId())
+              .fetch();
+      for (StockMove stockMove : stockMoveList) {
+        stockMove.removeInvoiceSetItem(invoice);
+        stockMove.addInvoiceSetItem(newInvoice);
+        invoice.removeStockMoveSetItem(stockMove);
+        newInvoice.addStockMoveSetItem(stockMove);
+        invoiceRepo.save(invoice);
+        invoiceRepo.save(newInvoice);
+        stockMoveRepository.save(stockMove);
+      }
+    }
+  }
+
+  @Override
+  public boolean hasFiscalPositionMismatch(Invoice invoice) {
+    SaleOrder saleOrder = invoice.getSaleOrder();
+    return saleOrder != null
+        && !Objects.equals(saleOrder.getFiscalPosition(), invoice.getFiscalPosition());
   }
 }

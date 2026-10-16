@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,39 +14,46 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service.invoice.generator;
 
 import com.axelor.apps.account.db.Account;
 import com.axelor.apps.account.db.AnalyticMoveLine;
-import com.axelor.apps.account.db.BudgetDistribution;
+import com.axelor.apps.account.db.FiscalPosition;
 import com.axelor.apps.account.db.FixedAssetCategory;
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.InvoiceLine;
+import com.axelor.apps.account.db.TaxEquiv;
 import com.axelor.apps.account.db.TaxLine;
-import com.axelor.apps.account.db.repo.AnalyticMoveLineMngtRepository;
-import com.axelor.apps.account.db.repo.AnalyticMoveLineRepository;
 import com.axelor.apps.account.db.repo.InvoiceLineRepository;
-import com.axelor.apps.account.service.invoice.InvoiceLineService;
 import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.invoice.generator.InvoiceLineGenerator;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.Unit;
 import com.axelor.apps.base.service.UnitConversionService;
 import com.axelor.apps.base.service.app.AppBaseService;
+import com.axelor.apps.base.service.tax.FiscalPositionServiceImpl;
+import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.purchase.db.PurchaseOrderLine;
 import com.axelor.apps.sale.db.SaleOrderLine;
 import com.axelor.apps.sale.db.repo.SaleOrderLineRepository;
 import com.axelor.apps.stock.db.StockMove;
 import com.axelor.apps.stock.db.StockMoveLine;
+import com.axelor.apps.stock.db.repo.StockMoveLineRepository;
+import com.axelor.apps.supplychain.model.AnalyticLineModel;
+import com.axelor.apps.supplychain.service.AnalyticLineModelService;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
-import com.axelor.common.ObjectUtils;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.supplychain.service.invoice.InvoiceLineAnalyticSupplychainService;
+import com.axelor.apps.supplychain.service.invoice.InvoiceLineAnalyticSupplychainServiceImpl;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /** Classe de création de ligne de facture abstraite. */
 public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerator {
@@ -54,8 +62,8 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
   protected PurchaseOrderLine purchaseOrderLine;
   protected StockMoveLine stockMoveLine;
 
-  protected AppBaseService appBaseService;
   protected UnitConversionService unitConversionService;
+  protected AppSupplychainService appSupplychainService;
 
   @Inject
   public InvoiceLineGeneratorSupplyChain(
@@ -68,7 +76,7 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
       String description,
       BigDecimal qty,
       Unit unit,
-      TaxLine taxLine,
+      Set<TaxLine> taxLineSet,
       int sequence,
       BigDecimal discountAmount,
       int discountTypeSelect,
@@ -88,7 +96,7 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
         description,
         qty,
         unit,
-        taxLine,
+        taxLineSet,
         sequence,
         discountAmount,
         discountTypeSelect,
@@ -100,6 +108,12 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
     this.stockMoveLine = stockMoveLine;
     this.appBaseService = Beans.get(AppBaseService.class);
     this.unitConversionService = Beans.get(UnitConversionService.class);
+
+    if (saleOrderLine != null) {
+      this.typeSelect = saleOrderLine.getTypeSelect();
+    } else if (purchaseOrderLine != null && purchaseOrderLine.getIsTitleLine()) {
+      this.typeSelect = InvoiceLineRepository.TYPE_TITLE;
+    }
   }
 
   protected InvoiceLineGeneratorSupplyChain(
@@ -135,7 +149,7 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
         this.unit = saleOrderLine.getUnit();
       }
       this.priceDiscounted = saleOrderLine.getPriceDiscounted();
-      this.taxLine = saleOrderLine.getTaxLine();
+      this.taxLineSet = saleOrderLine.getTaxLineSet();
       this.discountTypeSelect = saleOrderLine.getDiscountTypeSelect();
       this.typeSelect = saleOrderLine.getTypeSelect();
     } else if (purchaseOrderLine != null) {
@@ -152,9 +166,10 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
         this.unit = purchaseOrderLine.getUnit();
       }
       this.priceDiscounted = purchaseOrderLine.getPriceDiscounted();
-      this.taxLine = purchaseOrderLine.getTaxLine();
+      this.taxLineSet = purchaseOrderLine.getTaxLineSet();
       this.discountTypeSelect = purchaseOrderLine.getDiscountTypeSelect();
     } else if (stockMoveLine != null) {
+      this.typeSelect = stockMoveLine.getLineTypeSelect();
       this.priceDiscounted = stockMoveLine.getUnitPriceUntaxed();
       Unit saleOrPurchaseUnit = this.getSaleOrPurchaseUnit();
 
@@ -172,6 +187,8 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
                 appBaseService.getNbDecimalDigitForUnitPrice(),
                 product);
         this.unit = saleOrPurchaseUnit;
+      } else if (saleOrPurchaseUnit != null && this.unit == null) {
+        this.unit = saleOrPurchaseUnit;
       }
     }
   }
@@ -182,21 +199,22 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
    */
   @Override
   protected InvoiceLine createInvoiceLine() throws AxelorException {
-
     InvoiceLine invoiceLine = super.createInvoiceLine();
 
     if (!Beans.get(AppSupplychainService.class).isApp("supplychain")) {
       return invoiceLine;
     }
 
-    InvoiceLineService invoiceLineService = Beans.get(InvoiceLineService.class);
+    InvoiceLineAnalyticSupplychainService invoiceLineAnalyticService =
+        Beans.get(InvoiceLineAnalyticSupplychainServiceImpl.class);
 
     this.assignOriginElements(invoiceLine);
+    this.assignDeliveryDate(invoiceLine);
 
-    List<AnalyticMoveLine> analyticMoveLineList = null;
+    List<AnalyticMoveLine> analyticMoveLineList;
 
+    boolean manageAnalytic = this.manageAnalytic();
     if (saleOrderLine != null) {
-
       switch (saleOrderLine.getTypeSelect()) {
         case SaleOrderLineRepository.TYPE_END_OF_PACK:
           invoiceLine.setIsHideUnitAmounts(saleOrderLine.getIsHideUnitAmounts());
@@ -204,88 +222,99 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
           break;
 
         case SaleOrderLineRepository.TYPE_NORMAL:
-          if (saleOrderLine.getAnalyticDistributionTemplate() != null
-              || !ObjectUtils.isEmpty(saleOrderLine.getAnalyticMoveLineList())) {
-            invoiceLine.setAnalyticDistributionTemplate(
-                saleOrderLine.getAnalyticDistributionTemplate());
-            this.copyAnalyticMoveLines(saleOrderLine.getAnalyticMoveLineList(), invoiceLine);
-            analyticMoveLineList = invoiceLineService.computeAnalyticDistribution(invoiceLine);
-          } else {
-            analyticMoveLineList =
-                invoiceLineService.getAndComputeAnalyticDistribution(invoiceLine, invoice);
-            analyticMoveLineList.stream().forEach(invoiceLine::addAnalyticMoveLineListItem);
+          if (manageAnalytic) {
+            invoiceLineAnalyticService.setInvoiceLineAnalyticInfo(
+                invoiceLine,
+                invoice,
+                new AnalyticLineModel(saleOrderLine, saleOrderLine.getMainSaleOrder()));
           }
           break;
 
         default:
           return invoiceLine;
       }
-
     } else if (purchaseOrderLine != null) {
-
-      if (purchaseOrderLine.getAnalyticDistributionTemplate() != null
-          || !ObjectUtils.isEmpty(purchaseOrderLine.getAnalyticMoveLineList())) {
-        invoiceLine.setAnalyticDistributionTemplate(
-            purchaseOrderLine.getAnalyticDistributionTemplate());
-        this.copyAnalyticMoveLines(purchaseOrderLine.getAnalyticMoveLineList(), invoiceLine);
-        analyticMoveLineList = invoiceLineService.computeAnalyticDistribution(invoiceLine);
-      } else {
-        analyticMoveLineList =
-            invoiceLineService.getAndComputeAnalyticDistribution(invoiceLine, invoice);
-        analyticMoveLineList.stream().forEach(invoiceLine::addAnalyticMoveLineListItem);
+      if (purchaseOrderLine.getIsTitleLine()) {
+        return invoiceLine;
       }
 
-      this.copyBudgetDistributionList(purchaseOrderLine.getBudgetDistributionList(), invoiceLine);
-      invoiceLine.setBudget(purchaseOrderLine.getBudget());
-      invoiceLine.setBudgetDistributionSumAmount(
-          purchaseOrderLine.getBudgetDistributionSumAmount());
+      if (manageAnalytic) {
+        invoiceLineAnalyticService.setInvoiceLineAnalyticInfo(
+            invoiceLine, invoice, new AnalyticLineModel(purchaseOrderLine, null));
+      }
+
       invoiceLine.setFixedAssets(purchaseOrderLine.getFixedAssets());
-
-      if (product != null) {
-        invoiceLine.setProductCode(
-            (String) productCompanyService.get(product, "code", invoice.getCompany()));
-        Account account =
-            accountManagementService.getProductAccount(
-                product,
-                invoice.getCompany(),
-                invoice.getPartner().getFiscalPosition(),
-                InvoiceToolService.isPurchase(invoice),
-                invoiceLine.getFixedAssets());
-        invoiceLine.setAccount(account);
-      }
 
       if (product != null && purchaseOrderLine.getFixedAssets()) {
         FixedAssetCategory fixedAssetCategory =
             accountManagementService.getProductFixedAssetCategory(product, invoice.getCompany());
         invoiceLine.setFixedAssetCategory(fixedAssetCategory);
       }
-
     } else if (stockMoveLine != null) {
+      switch (stockMoveLine.getLineTypeSelect()) {
+        case StockMoveLineRepository.TYPE_NORMAL:
+          this.price = stockMoveLine.getUnitPriceUntaxed();
+          this.inTaxPrice = stockMoveLine.getUnitPriceTaxed();
 
-      this.price = stockMoveLine.getUnitPriceUntaxed();
-      this.inTaxPrice = stockMoveLine.getUnitPriceTaxed();
+          Unit stockMoveLineUnit = stockMoveLine.getUnit();
+          if (stockMoveLineUnit != null
+              && this.unit != null
+              && !Objects.equals(stockMoveLineUnit, this.unit)) {
+            this.price =
+                unitConversionService.convert(
+                    stockMoveLineUnit,
+                    this.unit,
+                    this.price,
+                    appBaseService.getNbDecimalDigitForUnitPrice(),
+                    product);
+            this.inTaxPrice =
+                unitConversionService.convert(
+                    stockMoveLineUnit,
+                    this.unit,
+                    this.inTaxPrice,
+                    appBaseService.getNbDecimalDigitForUnitPrice(),
+                    product);
+          }
 
-      this.price =
-          unitConversionService.convert(
-              stockMoveLine.getUnit(),
-              this.unit,
-              this.price,
-              appBaseService.getNbDecimalDigitForUnitPrice(),
-              product);
-      this.inTaxPrice =
-          unitConversionService.convert(
-              stockMoveLine.getUnit(),
-              this.unit,
-              this.inTaxPrice,
-              appBaseService.getNbDecimalDigitForUnitPrice(),
-              product);
+          invoiceLine.setPrice(price);
+          invoiceLine.setInTaxPrice(inTaxPrice);
 
-      invoiceLine.setPrice(price);
-      invoiceLine.setInTaxPrice(inTaxPrice);
+          invoiceLineAnalyticService.getAndComputeAnalyticDistribution(invoiceLine, invoice);
+          break;
 
-      analyticMoveLineList =
-          invoiceLineService.getAndComputeAnalyticDistribution(invoiceLine, invoice);
-      analyticMoveLineList.stream().forEach(invoiceLine::addAnalyticMoveLineListItem);
+        default:
+          return invoiceLine;
+      }
+    }
+
+    FiscalPosition fiscalPosition = invoice.getFiscalPosition();
+    boolean isPurchase = InvoiceToolService.isPurchase(invoice);
+
+    // Determine and set the account for the line
+    if (product != null) {
+      invoiceLine.setProductCode(
+          (String) productCompanyService.get(product, "code", invoice.getCompany()));
+      Account account =
+          accountManagementService.getProductAccount(
+              product,
+              invoice.getCompany(),
+              fiscalPosition,
+              isPurchase,
+              invoiceLine.getFixedAssets());
+      invoiceLine.setAccount(account);
+    }
+
+    // Determine and set the taxEquiv for the line
+    TaxEquiv taxEquiv =
+        Beans.get(FiscalPositionServiceImpl.class)
+            .getTaxEquivFromOrToTaxSet(invoice.getFiscalPosition(), taxLineSet);
+
+    invoiceLine.setTaxEquiv(taxEquiv);
+
+    PurchaseOrder purchaseOrder = invoice.getPurchaseOrder();
+    if (purchaseOrder != null) {
+      computeCompanyTotal(
+          invoiceLine, Optional.ofNullable(purchaseOrder.getOrderDate()).orElse(today));
     }
 
     return invoiceLine;
@@ -305,7 +334,6 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
         invoiceLine.setOutgoingStockMove(stockMove);
       }
     }
-
     if (saleOrderLine != null) {
       invoiceLine.setSaleOrderLine(saleOrderLine);
     }
@@ -314,46 +342,42 @@ public abstract class InvoiceLineGeneratorSupplyChain extends InvoiceLineGenerat
     }
   }
 
-  public void copyAnalyticMoveLines(
-      List<AnalyticMoveLine> originalAnalyticMoveLineList, InvoiceLine invoiceLine) {
-
-    if (originalAnalyticMoveLineList == null) {
-      return;
-    }
-
-    for (AnalyticMoveLine originalAnalyticMoveLine : originalAnalyticMoveLineList) {
-
-      AnalyticMoveLine analyticMoveLine =
-          Beans.get(AnalyticMoveLineRepository.class).copy(originalAnalyticMoveLine, false);
-
-      analyticMoveLine.setTypeSelect(AnalyticMoveLineMngtRepository.STATUS_FORECAST_INVOICE);
-
-      invoiceLine.addAnalyticMoveLineListItem(analyticMoveLine);
-    }
-  }
-
-  public void copyBudgetDistributionList(
-      List<BudgetDistribution> originalBudgetDistributionList, InvoiceLine invoiceLine) {
-
-    if (originalBudgetDistributionList == null) {
-      return;
-    }
-
-    for (BudgetDistribution budgetDistributionIt : originalBudgetDistributionList) {
-      BudgetDistribution budgetDistribution = new BudgetDistribution();
-      budgetDistribution.setBudget(budgetDistributionIt.getBudget());
-      budgetDistribution.setAmount(budgetDistributionIt.getAmount());
-      budgetDistribution.setBudgetAmountAvailable(budgetDistributionIt.getBudgetAmountAvailable());
-      invoiceLine.addBudgetDistributionListItem(budgetDistribution);
-    }
-  }
-
   public Unit getSaleOrPurchaseUnit() throws AxelorException {
-
+    if (product == null) {
+      return null;
+    }
     if (!InvoiceToolService.isPurchase(invoice)) {
       return product.getSalesUnit();
     } else {
       return product.getPurchasesUnit();
+    }
+  }
+
+  public boolean manageAnalytic() throws AxelorException {
+    AnalyticLineModel analyticLineModel = null;
+
+    if (saleOrderLine != null) {
+      analyticLineModel = new AnalyticLineModel(saleOrderLine, saleOrderLine.getMainSaleOrder());
+    } else if (purchaseOrderLine != null) {
+      analyticLineModel = new AnalyticLineModel(purchaseOrderLine, null);
+    }
+
+    return analyticLineModel != null
+        && Beans.get(AnalyticLineModelService.class)
+            .productAccountManageAnalytic(analyticLineModel);
+  }
+
+  public void assignDeliveryDate(InvoiceLine invoiceLine) {
+    if (saleOrderLine != null && saleOrderLine.getEstimatedDeliveryDate() != null) {
+      invoiceLine.setDeliveryDate(saleOrderLine.getEstimatedDeliveryDate());
+    }
+    if (purchaseOrderLine != null && purchaseOrderLine.getEstimatedReceiptDate() != null) {
+      invoiceLine.setDeliveryDate(purchaseOrderLine.getEstimatedReceiptDate());
+    }
+    if (stockMoveLine != null
+        && stockMoveLine.getStockMove() != null
+        && stockMoveLine.getStockMove().getRealDate() != null) {
+      invoiceLine.setDeliveryDate(stockMoveLine.getStockMove().getRealDate());
     }
   }
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <object-views xmlns="http://axelor.com/xml/ns/object-views"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/object-views http://axelor.com/xml/ns/object-views/object-views_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/object-views https://axelor.com/xml/ns/object-views/object-views_8.2.xsd">
 
   <grid name="campaign-grid" title="Campaigns" model="com.axelor.apps.marketing.db.Campaign">
     <field name="name"/>
@@ -14,7 +14,7 @@
     onNew="action-campaign-attrs-on-new-on-load,action-campaign-attrs-manage-event-readonly"
     onLoad="action-campaign-attrs-on-new-on-load,action-campaign-attrs-manage-event-readonly">
     <menubar>
-      <menu name="campaignToolsMenu" title="Tools" icon="fa-wrench" showTitle="true">
+      <menu name="campaignToolsMenu" title="Tools" icon="wrench" showTitle="true">
         <item name="launchEmailingItem" title="Launch emailing"
           action="save,action-campaign-validate-send-email,action-campaign-method-send-email"
           readonlyIf="!emailing"/>
@@ -25,9 +25,11 @@
         readonly="true"/>
       <field name="name" showTitle="false" colSpan="12">
         <viewer depends="name"><![CDATA[
-					<h3>
-						<span style="margin: 5px 0 !important; display: inline-table; line-height: initial;">{{record.name}}</span>
-					</h3>
+					<>
+						<h3>
+							<span>{name}</span>
+						</h3>
+					</>
 				]]></viewer>
         <editor>
           <field name="name" showTitle="true"/>
@@ -35,7 +37,12 @@
       </field>
       <spacer name="nameSpacer"/>
       <panel name="informationPanel" title="Information" colSpan="12">
-        <field name="campaignType" canEdit="false" colSpan="4"/>
+        <field name="campaignType" canEdit="false" colSpan="4" showIf="!$readonly()"/>
+        <field name="campaignType" showTitle="false" colSpan="4" showIf="$readonly()">
+          <viewer depends="name">
+            <![CDATA[<><Badge style={{ backgroundColor: "#8806CE" }}>{name}</Badge></>]]>
+          </viewer>
+        </field>
         <field name="eventStartDateT" colSpan="4"
           validIf="eventStartDateT == null || eventEndDateT == null || eventStartDateT &lt; eventEndDateT"/>
         <field name="eventEndDateT" colSpan="4"
@@ -46,6 +53,9 @@
       </panel>
     </panel>
     <panel-tabs name="mainPanelTab">
+      <panel name="descriptionPanel" title="Description">
+        <field name="description" colSpan="12" widget="html" height="200"/>
+      </panel>
       <panel title="Target List" name="targetListPanel">
         <field name="isAllowEditingOfTargets" colSpan="3" widget="boolean-switch"
           onChange="action-campaign-attrs-is-allow-editing-of-targets-on-change"/>
@@ -68,13 +78,13 @@
       </panel>
       <panel name="emailingPanel" title="Emailing" showIf="emailing" colSpan="12">
         <field name="partnerTemplate"
-          domain="self.metaModel.name = 'Partner' AND self.mediaTypeSelect IN (4)" showIf="emailing"/>
+          domain="self.metaModel.name = 'Partner' AND self.mediaTypeSelect IN (2)" showIf="emailing"/>
         <field name="leadTemplate"
-          domain="self.metaModel.name = 'Lead' AND self.mediaTypeSelect IN (4)" showIf="emailing"/>
+          domain="self.metaModel.name = 'Lead' AND self.mediaTypeSelect IN (2)" showIf="emailing"/>
         <field name="partnerReminderTemplate"
-          domain="self.metaModel.name = 'Partner' AND self.mediaTypeSelect IN (4)"/>
+          domain="self.metaModel.name = 'Partner' AND self.mediaTypeSelect IN (2)"/>
         <field name="leadReminderTemplate"
-          domain="self.metaModel.name = 'Lead' AND self.mediaTypeSelect IN (4)"/>
+          domain="self.metaModel.name = 'Lead' AND self.mediaTypeSelect IN (2)"/>
         <field name="emailAccount" showIf="emailing"/>
         <panel-dashlet name="generatedEmailsPanel" action="dashlet.generated.emails"
           height="350" colSpan="12"/>
@@ -141,8 +151,9 @@
             field="notParticipatingPartnerSet" colSpan="12" grid-view="partner-campaign-grid"
             form-view="partner-form" canNew="false" canEdit="false" canSelect="false"/>
         </panel>
-        <panel name="emailingReportPanel" title="Emailing report" colSpan="12">
-          <field name="emailLog" widget="binary-link" showIf="emailing"/>
+        <panel name="emailingReportPanel" title="Emailing report" colSpan="12"
+          showIf="emailing">
+          <field name="emailLog" widget="binary-link"/>
         </panel>
       </panel>
       <panel-related name="campaignReminderListPanel" field="campaignReminderList"
@@ -167,7 +178,7 @@
         onClick="save,action-campaign-record-ended,save,action-campaign-attrs-on-new-on-load"/>
       <button name="cancelBtn" showIf="stageSelect != 0" title="Cancel"
         onClick="save,action-campaign-record-cancel,save,action-campaign-attrs-on-new-on-load"
-        css="btn-danger" icon="fa-times"/>
+        css="btn-danger" icon="x"/>
     </panel>
   </form>
 
@@ -181,10 +192,44 @@
     <hilite color="info" if="stageSelect &lt;= 3"/>
     <hilite color="success" if="stageSelect &lt;= 4"/>
     <template><![CDATA[
-	        <h4>{{name}}</h4>
-	        <div class="card-body">{{campaignType.name}}</div>
+	        <>
+		        <strong>{name}</strong>
+		        <Box>{campaignType.name}</Box>
+	        </>
 	]]></template>
   </kanban>
+
+  <cards name="campaign-cards" model="com.axelor.apps.marketing.db.Campaign" title="Campaign"
+    css="rect-image" width="100%" orderBy="-eventStartDateT">
+    <field name="name"/>
+    <field name="campaignType"/>
+    <field name="stageSelect"/>
+    <field name="eventStartDateT"/>
+    <field name="description"/>
+    <template><![CDATA[
+	      	<>
+	      		<Box>
+	      			<Box d="flex" gap="4">
+	      				{stageSelect == 0 && <Badge style={{ backgroundColor: "#0285D8" }}>{_t('Draft')}</Badge>}
+	      				{stageSelect == 1 && <Badge bg="warning">{_t('Planned')}</Badge>}
+	      				{stageSelect == 2 && <Badge bg="info">{_t('Started')}</Badge>}
+	      				{stageSelect == 3 && <Badge bg="danger">{_t('Suspended')}</Badge>}
+	      				{stageSelect == 4 && <Badge bg="success">{_t('Ended')}</Badge>}
+
+	      				<Badge style={{ backgroundColor: "#8806CE" }}>{campaignType.name}</Badge>
+	      			</Box>
+	      			<Box mt={4}>
+						<strong>{name}</strong> <Box/>
+						{$fmt('eventStartDateT')}
+		        	</Box>
+	      			<Box mt={4}>
+						<strong>{_t('Description')} :</strong> <Box/>
+			        	{description && <Box dangerouslySetInnerHTML={{__html : description}} style={{ height: 100 }}></Box>}
+		        	</Box>
+	      		</Box>
+	      	</>
+	  	]]></template>
+  </cards>
 
   <action-attrs name="action-campaign-attrs-on-new-on-load">
     <attribute name="hidden" expr="eval: stageSelect &lt; 2"
@@ -224,7 +269,7 @@
   <action-record name="action-campaign-record-set-duration"
     model="com.axelor.apps.marketing.db.Campaign">
     <field name="duration"
-      expr="eval: com.axelor.apps.tool.date.DurationTool.getSecondsDuration( com.axelor.apps.tool.date.DurationTool.computeDuration(eventStartDateTime, eventEndDateTime))"
+      expr="eval: com.axelor.utils.helpers.date.DurationHelper.getSecondsDuration( com.axelor.utils.helpers.date.DurationHelper.computeDuration(eventStartDateTime, eventEndDateTime))"
       if="eventStartDateTime != null &amp;&amp; eventEndDateTime != null"/>
   </action-record>
 
@@ -274,6 +319,7 @@
 
   <action-view name="action-lead-view-marketing-campaigns" title="Marketing Campaigns"
     model="com.axelor.apps.marketing.db.Campaign">
+    <view type="cards" name="campaign-cards"/>
     <view type="grid" name="campaign-grid"/>
     <view type="form" name="campaign-form"/>
     <domain>self.leadSet.id IN (:id)</domain>
@@ -281,6 +327,7 @@
 
   <action-view name="action-partner-view-marketing-campaigns"
     title="Marketing Campaigns" model="com.axelor.apps.marketing.db.Campaign">
+    <view type="cards" name="campaign-cards"/>
     <view type="grid" name="campaign-grid"/>
     <view type="form" name="campaign-form"/>
     <domain>self.partnerSet.id IN (:id)</domain>
@@ -310,11 +357,13 @@
   </action-view>
 
   <action-view name="dashlet.generated.emails" title="Generated emails"
-    model="com.axelor.apps.message.db.Message">
+    model="com.axelor.message.db.Message">
     <view type="grid" name="message-grid"/>
     <view type="form" name="message-form"/>
-    <domain>self.relatedTo1Select = 'com.axelor.apps.marketing.db.Campaign' AND
-      self.relatedTo1SelectId = :id</domain>
+    <domain>self.id IN (SELECT related.message.id FROM MultiRelated as related WHERE
+      related.relatedToSelect
+      = 'com.axelor.apps.marketing.db.Campaign' AND related.relatedToSelectId
+      = :id)</domain>
   </action-view>
 
   <action-method name="action-campaign-generate-targets"

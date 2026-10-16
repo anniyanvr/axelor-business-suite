@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,17 +14,17 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.web;
 
 import com.axelor.apps.account.db.AccountingReport;
-import com.axelor.apps.bankpayment.service.AccountingReportBankPaymentService;
-import com.axelor.exception.service.TraceBackService;
+import com.axelor.apps.base.service.BankDetailsService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.inject.Beans;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 
 @Singleton
 public class AccountingReportController {
@@ -31,15 +32,12 @@ public class AccountingReportController {
   public void setBankDetailsDomain(ActionRequest request, ActionResponse response) {
     try {
       AccountingReport accountingReport = request.getContext().asType(AccountingReport.class);
-      String domain =
-          Beans.get(AccountingReportBankPaymentService.class)
-              .createDomainForBankDetails(accountingReport);
-      // if nothing was found for the domain, we set it at a default value.
-      if (domain.equals("")) {
-        response.setAttr("bankDetailsSet", "domain", "self.id IN (0)");
-      } else {
-        response.setAttr("bankDetailsSet", "domain", domain);
-      }
+      response.setAttr(
+          "bankDetailsSet",
+          "domain",
+          Beans.get(BankDetailsService.class)
+              .getActiveCompanyBankDetails(
+                  accountingReport.getCompany(), accountingReport.getCurrency()));
     } catch (Exception e) {
       TraceBackService.trace(response, e);
     }

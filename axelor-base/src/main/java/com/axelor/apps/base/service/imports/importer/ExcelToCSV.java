@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,13 +14,13 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.imports.importer;
 
-import com.axelor.apps.base.exceptions.IExceptionMessage;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.i18n.I18n;
 import java.io.File;
 import java.io.FileInputStream;
@@ -34,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -84,11 +86,11 @@ public class ExcelToCSV {
           for (int cell = startColumn; cell < headerRow.getLastCellNum(); cell++) {
             Cell headerCell = headerRow.getCell(cell);
             if (headerCell == null
-                || headerCell.getCellType() != Cell.CELL_TYPE_STRING
+                || headerCell.getCellType() != CellType.STRING
                 || headerCell.getStringCellValue().isEmpty()) {
               throw new AxelorException(
                   TraceBackRepository.CATEGORY_INCONSISTENCY,
-                  I18n.get(IExceptionMessage.INVALID_HEADER));
+                  I18n.get(BaseExceptionMessage.INVALID_HEADER));
             }
 
             String value = headerCell.getStringCellValue();
@@ -112,12 +114,12 @@ public class ExcelToCSV {
               if (dataCell != null) {
 
                 switch (dataCell.getCellType()) {
-                  case Cell.CELL_TYPE_STRING:
+                  case CellType.STRING:
                     String strData = dataCell.getStringCellValue();
                     value = "\"" + strData + "\"";
                     break;
 
-                  case Cell.CELL_TYPE_NUMERIC:
+                  case CellType.NUMERIC:
                     if (DateUtil.isCellDateFormatted(dataCell)) {
                       String dateInString = getDateValue(dataCell);
                       value = "\"" + dateInString + "\"";
@@ -128,10 +130,10 @@ public class ExcelToCSV {
                     }
                     break;
 
-                  case Cell.CELL_TYPE_BOOLEAN:
-                    value = new Boolean(dataCell.getBooleanCellValue()).toString();
+                  case CellType.BOOLEAN:
+                    value = Boolean.valueOf(dataCell.getBooleanCellValue()).toString();
                     break;
-                  case Cell.CELL_TYPE_BLANK:
+                  case CellType.BLANK:
                   default:
                     break;
                 }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,19 +14,20 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.web;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.AdvancedExport;
+import com.axelor.apps.base.db.AdvancedExportLine;
 import com.axelor.apps.base.db.repo.AdvancedExportRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.advancedExport.AdvancedExportService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.common.Inflector;
 import com.axelor.db.Model;
 import com.axelor.db.mapper.Mapper;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.MetaFiles;
@@ -40,9 +42,10 @@ import com.axelor.rpc.ActionResponse;
 import com.axelor.rpc.Context;
 import com.axelor.rpc.filter.Filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -77,6 +80,14 @@ public class AdvancedExportController {
       for (MetaField field : advancedExport.getMetaModel().getMetaFields()) {
         Map<String, Object> allFieldMap = new HashMap<>();
         allFieldMap.put("currentDomain", advancedExport.getMetaModel().getName());
+
+        Class<?> modelClass = Class.forName(advancedExport.getMetaModel().getFullName());
+        Mapper modelMapper = Mapper.of(modelClass);
+
+        if (modelMapper.getProperty(field.getName()) == null
+            || modelMapper.getProperty(field.getName()).isTransient()) {
+          continue;
+        }
 
         if (!Strings.isNullOrEmpty(field.getRelationship())) {
           MetaModel metaModel =
@@ -123,7 +134,7 @@ public class AdvancedExportController {
     }
   }
 
-  private String getFieldTitle(Inflector inflector, String fieldName) {
+  protected String getFieldTitle(Inflector inflector, String fieldName) {
     return inflector.humanize(fieldName);
   }
 
@@ -177,7 +188,7 @@ public class AdvancedExportController {
     }
   }
 
-  private void advancedExport(ActionRequest request, ActionResponse response, String fileType)
+  protected void advancedExport(ActionRequest request, ActionResponse response, String fileType)
       throws AxelorException, IOException {
 
     AdvancedExport advancedExport = request.getContext().asType(AdvancedExport.class);
@@ -186,7 +197,7 @@ public class AdvancedExportController {
     getAdvancedExportFile(request, response, advancedExport, fileType);
   }
 
-  private void getAdvancedExportFile(
+  protected void getAdvancedExportFile(
       ActionRequest request,
       ActionResponse response,
       AdvancedExport advancedExport,
@@ -200,7 +211,7 @@ public class AdvancedExportController {
       File file = advancedExportService.export(advancedExport, recordIds, fileType);
 
       if (advancedExportService.getIsReachMaxExportLimit()) {
-        response.setFlash(I18n.get(IExceptionMessage.ADVANCED_EXPORT_3));
+        response.setInfo(I18n.get(BaseExceptionMessage.ADVANCED_EXPORT_3));
       }
 
       FileInputStream inStream = new FileInputStream(file);
@@ -211,7 +222,7 @@ public class AdvancedExportController {
 
       downloadExportFile(response, exportFile);
     } else {
-      response.setError(I18n.get(IExceptionMessage.ADVANCED_EXPORT_1));
+      response.setError(I18n.get(BaseExceptionMessage.ADVANCED_EXPORT_1));
     }
   }
 
@@ -233,12 +244,13 @@ public class AdvancedExportController {
         Filter filter =
             Beans.get(AdvancedExportService.class)
                 .getJpaSecurityFilter(advancedExport.getMetaModel());
-        Stream<? extends Model> listObj =
+        try (Stream<? extends Model> listObj =
             parentRequest
                 .getCriteria()
                 .createQuery(klass, filter)
-                .fetchSteam(advancedExport.getMaxExportLimit());
-        return listObj.map(it -> it.getId()).collect(Collectors.toList());
+                .fetchStream(advancedExport.getMaxExportLimit())) {
+          return listObj.map(it -> it.getId()).collect(Collectors.toList());
+        }
       }
     }
     return null;
@@ -265,7 +277,7 @@ public class AdvancedExportController {
     }
 
     if (Strings.isNullOrEmpty(criteria))
-      response.setError(I18n.get(IExceptionMessage.ADVANCED_EXPORT_2));
+      response.setError(I18n.get(BaseExceptionMessage.ADVANCED_EXPORT_2));
     else {
 
       String metaModelName = request.getModel();
@@ -301,7 +313,7 @@ public class AdvancedExportController {
     try {
       if (request.getContext().get("_xAdvancedExport") == null
           || request.getContext().get("exportFormatSelect") == null) {
-        response.setError(I18n.get(IExceptionMessage.ADVANCED_EXPORT_4));
+        response.setError(I18n.get(BaseExceptionMessage.ADVANCED_EXPORT_4));
         return;
       }
       AdvancedExport advancedExport =
@@ -318,7 +330,7 @@ public class AdvancedExportController {
     }
   }
 
-  private void downloadExportFile(ActionResponse response, MetaFile exportFile) {
+  protected void downloadExportFile(ActionResponse response, MetaFile exportFile) {
     if (exportFile != null) {
       response.setView(
           ActionView.define(I18n.get("Export file"))
@@ -332,5 +344,28 @@ public class AdvancedExportController {
               .param("download", "true")
               .map());
     }
+  }
+
+  public void metaFieldDomain(ActionRequest request, ActionResponse response)
+      throws ClassNotFoundException {
+    AdvancedExportLine adv = request.getContext().asType(AdvancedExportLine.class);
+    MetaModel metaModel = Beans.get(MetaModelRepository.class).findByName(adv.getCurrentDomain());
+    List<MetaField> metaFields = metaModel.getMetaFields();
+    List<Long> metaFieldList = new ArrayList<>();
+
+    if (metaFields != null) {
+      Class<?> klass = Class.forName(metaModel.getFullName());
+      Mapper mapper = Mapper.of(klass);
+
+      for (MetaField field : metaFields) {
+        if (mapper.getProperty(field.getName()) != null
+            && !mapper.getProperty(field.getName()).isTransient()) {
+          metaFieldList.add(field.getId());
+        }
+      }
+    }
+    metaFieldList.add(0L);
+    response.setAttr(
+        "metaField", "domain", "self.id in (" + Joiner.on(",").join(metaFieldList) + ")");
   }
 }

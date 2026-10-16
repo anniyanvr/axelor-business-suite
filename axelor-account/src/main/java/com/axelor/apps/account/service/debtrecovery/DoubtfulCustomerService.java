@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,37 +14,50 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service.debtrecovery;
 
 import com.axelor.apps.account.db.Account;
 import com.axelor.apps.account.db.AccountConfig;
+import com.axelor.apps.account.db.FiscalPosition;
 import com.axelor.apps.account.db.Invoice;
+import com.axelor.apps.account.db.InvoiceTerm;
 import com.axelor.apps.account.db.Move;
 import com.axelor.apps.account.db.MoveLine;
 import com.axelor.apps.account.db.Reconcile;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
+import com.axelor.apps.account.db.repo.InvoiceTermRepository;
 import com.axelor.apps.account.db.repo.MoveLineRepository;
 import com.axelor.apps.account.db.repo.MoveRepository;
 import com.axelor.apps.account.service.FiscalPositionAccountService;
-import com.axelor.apps.account.service.ReconcileService;
 import com.axelor.apps.account.service.config.AccountConfigService;
-import com.axelor.apps.account.service.move.MoveLineService;
-import com.axelor.apps.account.service.move.MoveService;
+import com.axelor.apps.account.service.invoice.InvoiceTermReplaceService;
+import com.axelor.apps.account.service.move.MoveCreateService;
+import com.axelor.apps.account.service.move.MoveLineInvoiceTermService;
+import com.axelor.apps.account.service.move.MoveToolService;
+import com.axelor.apps.account.service.move.MoveValidateService;
+import com.axelor.apps.account.service.moveline.MoveLineCreateService;
+import com.axelor.apps.account.service.reconcile.ReconcileService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.db.JPA;
-import com.axelor.exception.AxelorException;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
+import com.axelor.meta.CallMethod;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import javax.persistence.Query;
+import java.util.Map;
+import java.util.stream.Collectors;
+import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,31 +65,46 @@ public class DoubtfulCustomerService {
 
   private final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  protected MoveService moveService;
+  protected MoveCreateService moveCreateService;
+  protected MoveValidateService moveValidateService;
+  protected MoveToolService moveToolService;
   protected MoveRepository moveRepo;
-  protected MoveLineService moveLineService;
+  protected MoveLineCreateService moveLineCreateService;
   protected MoveLineRepository moveLineRepo;
   protected ReconcileService reconcileService;
   protected AccountConfigService accountConfigService;
   protected AppBaseService appBaseService;
+  protected InvoiceTermRepository invoiceTermRepo;
+  protected InvoiceTermReplaceService invoiceTermReplaceService;
+  protected MoveLineInvoiceTermService moveLineInvoiceTermService;
 
   @Inject
   public DoubtfulCustomerService(
-      MoveService moveService,
+      MoveCreateService moveCreateService,
+      MoveValidateService moveValidateService,
+      MoveToolService moveToolService,
       MoveRepository moveRepo,
-      MoveLineService moveLineService,
+      MoveLineCreateService moveLineCreateService,
       MoveLineRepository moveLineRepo,
       ReconcileService reconcileService,
       AccountConfigService accountConfigService,
-      AppBaseService appBaseService) {
+      AppBaseService appBaseService,
+      InvoiceTermRepository invoiceTermRepo,
+      InvoiceTermReplaceService invoiceTermReplaceService,
+      MoveLineInvoiceTermService moveLineInvoiceTermService) {
 
-    this.moveService = moveService;
+    this.moveCreateService = moveCreateService;
+    this.moveValidateService = moveValidateService;
+    this.moveToolService = moveToolService;
     this.moveRepo = moveRepo;
-    this.moveLineService = moveLineService;
+    this.moveLineCreateService = moveLineCreateService;
     this.moveLineRepo = moveLineRepo;
     this.reconcileService = reconcileService;
     this.accountConfigService = accountConfigService;
     this.appBaseService = appBaseService;
+    this.invoiceTermRepo = invoiceTermRepo;
+    this.invoiceTermReplaceService = invoiceTermReplaceService;
+    this.moveLineInvoiceTermService = moveLineInvoiceTermService;
   }
 
   /**
@@ -114,6 +143,21 @@ public class DoubtfulCustomerService {
     }
   }
 
+  public List<MoveLine> getInvoicePartnerMoveLines(Move move, Account doubtfulCustomerAccount) {
+    List<MoveLine> moveLineList = new ArrayList<MoveLine>();
+    for (MoveLine moveLine : move.getMoveLineList()) {
+      if (moveLine.getAccount() != null
+          && moveLine.getAccount().getUseForPartnerBalance()
+          && moveLine.getAmountRemaining().signum() > 0
+          && !moveLine.getAccount().equals(doubtfulCustomerAccount)
+          && moveLine.getDebit().signum() > 0) {
+        moveLineList.add(moveLine);
+      }
+    }
+
+    return moveLineList;
+  }
+
   /**
    * Procédure permettant de créer les écritures de passage en client douteux pour chaque écriture
    * de facture
@@ -126,88 +170,108 @@ public class DoubtfulCustomerService {
   @Transactional(rollbackOn = {Exception.class})
   public void createDoubtFulCustomerMove(
       Move move, Account doubtfulCustomerAccount, String debtPassReason) throws AxelorException {
-
-    log.debug("Concerned account move : {} ", move.getReference());
-
     Company company = move.getCompany();
     Partner partner = move.getPartner();
     Invoice invoice = move.getInvoice();
+
     Move newMove =
-        moveService
-            .getMoveCreateService()
-            .createMove(
-                company.getAccountConfig().getAutoMiscOpeJournal(),
-                company,
-                invoice.getCurrency(),
-                partner,
-                move.getPaymentMode(),
-                MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
-                move.getFunctionalOriginSelect());
+        moveCreateService.createMove(
+            company.getAccountConfig().getAutoMiscOpeJournal(),
+            company,
+            move.getCurrency(),
+            partner,
+            move.getPaymentMode(),
+            invoice != null
+                ? invoice.getFiscalPosition()
+                : (partner != null ? partner.getFiscalPosition() : null),
+            MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
+            MoveRepository.FUNCTIONAL_ORIGIN_DOUBTFUL_CUSTOMER,
+            move.getOrigin(),
+            debtPassReason,
+            invoice != null ? invoice.getCompanyBankDetails() : move.getCompanyBankDetails());
+    newMove.setOriginDate(move.getOriginDate());
     newMove.setInvoice(invoice);
     LocalDate todayDate = appBaseService.getTodayDate(company);
 
-    MoveLine invoicePartnerMoveLine = null;
-
-    for (MoveLine moveLine : move.getMoveLineList()) {
-      if (moveLine.getAccount().getUseForPartnerBalance()
-          && moveLine.getAmountRemaining().compareTo(BigDecimal.ZERO) > 0
-          && moveLine.getAccount() != doubtfulCustomerAccount
-          && moveLine.getDebit().compareTo(BigDecimal.ZERO) > 0) {
-        invoicePartnerMoveLine = moveLine;
-      }
-    }
+    List<MoveLine> invoicePartnerMoveLines =
+        this.getInvoicePartnerMoveLines(move, doubtfulCustomerAccount);
 
     String origin = "";
     BigDecimal amountRemaining = BigDecimal.ZERO;
-    MoveLine creditMoveLine = null;
-    if (invoicePartnerMoveLine != null) {
-      amountRemaining = invoicePartnerMoveLine.getAmountRemaining();
+    BigDecimal totalCurrencyAmountRemaining = BigDecimal.ZERO;
+    BigDecimal currencyRate = BigDecimal.ONE;
+    List<MoveLine> creditMoveLines = new ArrayList<>();
 
-      // Debit move line on partner account
-      creditMoveLine =
-          moveLineService.createMoveLine(
-              newMove,
-              partner,
-              invoicePartnerMoveLine.getAccount(),
-              amountRemaining,
-              false,
-              todayDate,
-              1,
-              move.getInvoice().getInvoiceId(),
-              debtPassReason);
-      newMove.getMoveLineList().add(creditMoveLine);
+    if (invoicePartnerMoveLines != null) {
+      for (MoveLine moveLine : invoicePartnerMoveLines) {
+        amountRemaining = amountRemaining.add(moveLine.getAmountRemaining().abs());
+        BigDecimal currencyAmountRemaining = this.getCurrencyAmountRemaining(moveLine);
+        totalCurrencyAmountRemaining = totalCurrencyAmountRemaining.add(currencyAmountRemaining);
+        currencyRate = moveLine.getCurrencyRate();
 
-      origin = creditMoveLine.getOrigin();
-    }
+        // Credit move line on partner account
+        MoveLine creditMoveLine =
+            moveLineCreateService.createMoveLine(
+                newMove,
+                partner,
+                moveLine.getAccount(),
+                currencyAmountRemaining,
+                moveLine.getAmountRemaining(),
+                currencyRate,
+                false,
+                todayDate,
+                todayDate,
+                null,
+                1,
+                move.getOrigin(),
+                debtPassReason);
+        moveLineInvoiceTermService.generateDefaultInvoiceTerm(newMove, creditMoveLine, false);
 
-    // Credit move line on partner account
-    MoveLine debitMoveLine =
-        moveLineService.createMoveLine(
-            newMove,
-            partner,
-            doubtfulCustomerAccount,
-            amountRemaining,
-            true,
-            todayDate,
-            2,
-            origin,
-            debtPassReason);
-    newMove.getMoveLineList().add(debitMoveLine);
-    debitMoveLine.setPassageReason(debtPassReason);
-
-    moveService.getMoveValidateService().validate(newMove);
-    moveRepo.save(newMove);
-
-    if (creditMoveLine != null) {
-      Reconcile reconcile =
-          reconcileService.createReconcile(
-              invoicePartnerMoveLine, creditMoveLine, amountRemaining, false);
-      if (reconcile != null) {
-        reconcileService.confirmReconcile(reconcile, true);
+        origin = creditMoveLine.getOrigin();
+        creditMoveLines.add(creditMoveLine);
       }
     }
 
+    // Debit move line on doubtful customer account
+    MoveLine debitMoveLine =
+        moveLineCreateService.createMoveLine(
+            newMove,
+            partner,
+            doubtfulCustomerAccount,
+            totalCurrencyAmountRemaining,
+            amountRemaining,
+            currencyRate,
+            true,
+            todayDate,
+            todayDate,
+            null,
+            2,
+            origin,
+            debtPassReason);
+    moveLineInvoiceTermService.generateDefaultInvoiceTerm(newMove, debitMoveLine, false);
+    debitMoveLine.setPassageReason(debtPassReason);
+
+    newMove.addMoveLineListItem(debitMoveLine);
+    creditMoveLines.forEach(newMove::addMoveLineListItem);
+    moveValidateService.accounting(newMove);
+
+    for (MoveLine moveLine : invoicePartnerMoveLines) {
+      invoiceTermReplaceService.replaceInvoiceTerms(
+          invoice, newMove, Collections.singletonList(moveLine), moveLine.getAccount());
+    }
+
     this.invoiceProcess(newMove, doubtfulCustomerAccount, debtPassReason);
+  }
+
+  protected BigDecimal getCurrencyAmountRemaining(MoveLine moveLine) {
+    if (moveLine.getCurrencyRate().compareTo(BigDecimal.ONE) == 0) {
+      return moveLine.getAmountRemaining();
+    } else {
+      return moveLine.getInvoiceTermList().stream()
+          .map(InvoiceTerm::getAmountRemaining)
+          .reduce(BigDecimal::add)
+          .orElse(BigDecimal.ZERO);
+    }
   }
 
   public void createDoubtFulCustomerRejectMove(
@@ -234,28 +298,30 @@ public class DoubtfulCustomerService {
       MoveLine moveLine, Account doubtfulCustomerAccount, String debtPassReason)
       throws AxelorException {
 
-    log.debug("Ecriture concernée : {} ", moveLine.getName());
+    log.debug("Concerned move : {} ", moveLine.getName());
     Company company = moveLine.getMove().getCompany();
     Partner partner = moveLine.getPartner();
     LocalDate todayDate = appBaseService.getTodayDate(company);
 
     Move newMove =
-        moveService
-            .getMoveCreateService()
-            .createMove(
-                company.getAccountConfig().getAutoMiscOpeJournal(),
-                company,
-                null,
-                partner,
-                moveLine.getMove().getPaymentMode(),
-                MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
-                moveLine.getMove().getFunctionalOriginSelect());
+        moveCreateService.createMove(
+            company.getAccountConfig().getAutoMiscOpeJournal(),
+            company,
+            null,
+            partner,
+            moveLine.getMove().getPaymentMode(),
+            partner != null ? partner.getFiscalPosition() : null,
+            MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
+            MoveRepository.FUNCTIONAL_ORIGIN_DOUBTFUL_CUSTOMER,
+            moveLine.getName(),
+            debtPassReason,
+            moveLine.getMove().getCompanyBankDetails());
 
-    BigDecimal amountRemaining = moveLine.getAmountRemaining();
+    BigDecimal amountRemaining = moveLine.getAmountRemaining().abs();
 
     // Ecriture au crédit sur le 411
     MoveLine creditMoveLine =
-        moveLineService.createMoveLine(
+        moveLineCreateService.createMoveLine(
             newMove,
             partner,
             moveLine.getAccount(),
@@ -270,12 +336,12 @@ public class DoubtfulCustomerService {
     Reconcile reconcile =
         reconcileService.createReconcile(moveLine, creditMoveLine, amountRemaining, false);
     if (reconcile != null) {
-      reconcileService.confirmReconcile(reconcile, true);
+      reconcileService.confirmReconcile(reconcile, true, true);
     }
 
     // Ecriture au débit sur le 416 (client douteux)
     MoveLine debitMoveLine =
-        moveLineService.createMoveLine(
+        moveLineCreateService.createMoveLine(
             newMove,
             newMove.getPartner(),
             doubtfulCustomerAccount,
@@ -290,7 +356,7 @@ public class DoubtfulCustomerService {
     debitMoveLine.setInvoiceReject(moveLine.getInvoiceReject());
     debitMoveLine.setPassageReason(debtPassReason);
 
-    moveService.getMoveValidateService().validate(newMove);
+    moveValidateService.accounting(newMove);
     moveRepo.save(newMove);
 
     this.invoiceRejectProcess(debitMoveLine, doubtfulCustomerAccount, debtPassReason);
@@ -341,16 +407,17 @@ public class DoubtfulCustomerService {
 
       invoice.setOldMove(invoice.getMove());
       invoice.setMove(move);
+      FiscalPosition fiscalPosition = invoice.getFiscalPosition();
+
       if (invoice.getPartner() != null) {
         doubtfulCustomerAccount =
             Beans.get(FiscalPositionAccountService.class)
-                .getAccount(invoice.getPartner().getFiscalPosition(), doubtfulCustomerAccount);
+                .getAccount(fiscalPosition, doubtfulCustomerAccount);
       }
       invoice.setPartnerAccount(doubtfulCustomerAccount);
       invoice.setDoubtfulCustomerOk(true);
       // Recalcule du restant à payer de la facture
-      invoice.setCompanyInTaxTotalRemaining(
-          moveService.getMoveToolService().getInTaxTotalRemaining(invoice));
+      invoice.setCompanyInTaxTotalRemaining(moveToolService.getInTaxTotalRemaining(invoice));
     }
     return invoice;
   }
@@ -374,139 +441,84 @@ public class DoubtfulCustomerService {
     return invoice;
   }
 
-  /**
-   * Fonction permettant de récupérer les écritures de facture à transférer sur le compte client
-   * douteux
-   *
-   * @param rule Le règle à appliquer :
-   *     <ul>
-   *       <li>0 = Créance de + 6 mois
-   *       <li>1 = Créance de + 3 mois
-   *     </ul>
-   *
-   * @param doubtfulCustomerAccount Le compte client douteux
-   * @param company La société
-   * @return Les écritures de facture à transférer sur le compte client douteux
-   */
-  public List<Move> getMove(int rule, Account doubtfulCustomerAccount, Company company) {
+  public List<Long> getMoveLineIds(
+      Company company, Account doubtfulCustomerAccount, int debtMonthNumber, boolean isReject) {
+    LocalDate date = appBaseService.getTodayDate(company).minusMonths(debtMonthNumber);
 
-    LocalDate date = null;
+    StringBuilder query =
+        new StringBuilder(
+            "self.move.company = :company "
+                + "AND self.account.useForPartnerBalance IS TRUE "
+                + "AND self.amountRemaining > 0.00 "
+                + "AND self.debit > 0.00 "
+                + "AND self.dueDate < :date "
+                + "AND self.account <> :doubtfulCustomerAccount ");
 
-    switch (rule) {
-
-        // Créance de + 6 mois
-      case 0:
-        date =
-            Beans.get(AppBaseService.class)
-                .getTodayDate(company)
-                .minusMonths(company.getAccountConfig().getSixMonthDebtMonthNumber());
-        break;
-
-        // Créance de + 3 mois
-      case 1:
-        date =
-            Beans.get(AppBaseService.class)
-                .getTodayDate(company)
-                .minusMonths(company.getAccountConfig().getThreeMonthDebtMontsNumber());
-        break;
-
-      default:
-        break;
+    if (isReject) {
+      query.append(
+          "AND self.invoiceReject IS NOT NULL AND self.invoiceReject.operationTypeSelect = :operationTypeSale");
+    } else {
+      query.append("AND self.move.functionalOriginSelect = :functionalOriginSale");
     }
 
-    log.debug("Date de créance prise en compte : {} ", date);
-
-    String request =
-        "SELECT DISTINCT m FROM MoveLine ml, Move m WHERE ml.move = m AND m.company.id = "
-            + company.getId()
-            + " AND ml.account.useForPartnerBalance = true "
-            + "AND m.invoice IS NOT NULL AND ml.amountRemaining > 0.00 AND ml.debit > 0.00 AND ml.dueDate < '"
-            + date.toString()
-            + "' AND ml.account.id != "
-            + doubtfulCustomerAccount.getId()
-            + " AND m.invoice.operationTypeSelect = "
-            + InvoiceRepository.OPERATION_TYPE_CLIENT_SALE;
-
-    log.debug("Requete : {} ", request);
-
-    Query query = JPA.em().createQuery(request);
-
-    @SuppressWarnings("unchecked")
-    List<Move> moveList = query.getResultList();
-
-    return moveList;
+    return moveLineRepo
+        .all()
+        .filter(query.toString())
+        .bind("company", company)
+        .bind("date", date)
+        .bind("doubtfulCustomerAccount", doubtfulCustomerAccount)
+        .bind("functionalOriginSale", MoveRepository.FUNCTIONAL_ORIGIN_SALE)
+        .bind("operationTypeSale", InvoiceRepository.OPERATION_TYPE_CLIENT_SALE)
+        .fetch()
+        .stream()
+        .map(MoveLine::getId)
+        .collect(Collectors.toList());
   }
 
-  /**
-   * Fonction permettant de récupérer les lignes d'écriture de rejet de facture à transférer sur le
-   * compte client douteux
-   *
-   * @param rule Le règle à appliquer :
-   *     <ul>
-   *       <li>0 = Créance de + 6 mois
-   *       <li>1 = Créance de + 3 mois
-   *     </ul>
-   *
-   * @param doubtfulCustomerAccount Le compte client douteux
-   * @param company La société
-   * @return Les lignes d'écriture de rejet de facture à transférer sur le comtpe client douteux
-   */
-  public List<? extends MoveLine> getRejectMoveLine(
-      int rule, Account doubtfulCustomerAccount, Company company) {
+  public Map<Long, Pair<Integer, Boolean>> getMoveLineMap(
+      Company company, Account doubtfulCustomerAccount) {
+    Map<Long, Pair<Integer, Boolean>> moveLineMap = new HashMap<>();
 
-    LocalDate date = null;
-    List<? extends MoveLine> moveLineList = null;
-
-    switch (rule) {
-
-        // Créance de + 6 mois
-      case 0:
-        date =
-            Beans.get(AppBaseService.class)
-                .getTodayDate(company)
-                .minusMonths(company.getAccountConfig().getSixMonthDebtMonthNumber());
-        moveLineList =
-            moveLineRepo
-                .all()
-                .filter(
-                    "self.move.company = ?1 AND self.account.useForPartnerBalance = 'true' "
-                        + "AND self.invoiceReject IS NOT NULL AND self.amountRemaining > 0.00 AND self.debit > 0.00 AND self.dueDate < ?2 "
-                        + "AND self.account != ?3 "
-                        + "AND self.invoiceReject.operationTypeSelect = ?4",
-                    company,
-                    date,
-                    doubtfulCustomerAccount,
-                    InvoiceRepository.OPERATION_TYPE_CLIENT_SALE)
-                .fetch();
-        break;
-
-        // Créance de + 3 mois
-      case 1:
-        date =
-            Beans.get(AppBaseService.class)
-                .getTodayDate(company)
-                .minusMonths(company.getAccountConfig().getThreeMonthDebtMontsNumber());
-        moveLineList =
-            moveLineRepo
-                .all()
-                .filter(
-                    "self.move.company = ?1 AND self.account.useForPartnerBalance = 'true' "
-                        + "AND self.invoiceReject IS NOT NULL AND self.amountRemaining > 0.00 AND self.debit > 0.00 AND self.dueDate < ?2 "
-                        + "AND self.account != ?3 "
-                        + "AND self.invoiceReject.operationTypeSelect = ?4",
-                    company,
-                    date,
-                    doubtfulCustomerAccount,
-                    InvoiceRepository.OPERATION_TYPE_CLIENT_SALE)
-                .fetch();
-        break;
-
-      default:
-        break;
+    for (Pair<Integer, Boolean> pair : this.getPairList(company.getAccountConfig())) {
+      for (long id :
+          this.getMoveLineIds(company, doubtfulCustomerAccount, pair.getLeft(), pair.getRight())) {
+        moveLineMap.put(id, pair);
+      }
     }
 
-    log.debug("Date de créance prise en compte : {} ", date);
+    return moveLineMap;
+  }
 
-    return moveLineList;
+  public List<Pair<Integer, Boolean>> getPairList(AccountConfig accountConfig) {
+    int sixMonthDebtMonthNumber = accountConfig.getSixMonthDebtMonthNumber();
+    int threeMonthDebtMonthNumber = accountConfig.getThreeMonthDebtMontsNumber();
+
+    return Arrays.asList(
+        Pair.of(sixMonthDebtMonthNumber, false),
+        Pair.of(threeMonthDebtMonthNumber, true),
+        Pair.of(sixMonthDebtMonthNumber, true),
+        Pair.of(threeMonthDebtMonthNumber, false));
+  }
+
+  @CallMethod
+  public List<Long> getDoubtfulCustomerPreviewList(
+      Company company, Account doubtfulCustomerAccount) {
+    List<Long> idList = new ArrayList<>();
+    AccountConfig accountConfig = company.getAccountConfig();
+
+    idList.addAll(
+        this.getMoveLineIds(
+            company, doubtfulCustomerAccount, accountConfig.getSixMonthDebtMonthNumber(), true));
+    idList.addAll(
+        this.getMoveLineIds(
+            company, doubtfulCustomerAccount, accountConfig.getThreeMonthDebtMontsNumber(), true));
+    idList.addAll(
+        this.getMoveLineIds(
+            company, doubtfulCustomerAccount, accountConfig.getSixMonthDebtMonthNumber(), false));
+    idList.addAll(
+        this.getMoveLineIds(
+            company, doubtfulCustomerAccount, accountConfig.getThreeMonthDebtMontsNumber(), false));
+
+    return idList.stream().distinct().collect(Collectors.toList());
   }
 }

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <domain-models xmlns="http://axelor.com/xml/ns/domain-models"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models http://axelor.com/xml/ns/domain-models/domain-models_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models https://axelor.com/xml/ns/domain-models/domain-models_8.2.xsd">
 
   <module name="bank-payment" package="com.axelor.apps.bankpayment.db"/>
 
-  <entity name="BankOrder" lang="java" sequential="true">
+  <entity name="BankOrder" sequential="true">
 
     <integer name="orderTypeSelect" title="Order Type"
       selection="bankpayment.bank.order.type.select"/>
@@ -21,7 +21,6 @@
       title="Payment Mode"/>
     <many-to-one name="bankOrderFileFormat"
       ref="com.axelor.apps.bankpayment.db.BankOrderFileFormat" title="File format" required="true"/>
-    <datetime name="confirmationDateTime" title="Confirmation date"/>
     <datetime name="validationDateTime" title="Validation date"/>
     <datetime name="fileGenerationDateTime" title="File generation date"/>
     <datetime name="sendingDateTime" title="Sending date"/>
@@ -32,10 +31,16 @@
     <boolean name="isMultiDate" title="Multidate"/>
     <boolean name="isMultiCurrency" title="Multicurrency"/>
     <decimal name="arithmeticTotal" title="Arithmetic total" readonly="true"/>
-    <boolean name="testMode" title="Test mode"/>
     <many-to-one name="batch" ref="com.axelor.apps.base.db.Batch" title="Batch"/>
+    <integer name="accountingTriggerSelect" title="Accounting move trigger select"
+      selection="bank.order.accounting.trigger.select" default="0"/>
     <integer name="technicalOriginSelect" title="Technical Origin"
       selection="bankpayment.bank.order.technical.origin.select" default="0"/>
+    <integer name="functionalOriginSelect" title="Functional Origin"
+      selection="bank.order.functional.origin.select" default="1"/>
+
+    <boolean name="hasBeenSentToBank" title="Sent to bank"/>
+    <boolean name="areMovesGenerated" title="Moves generated"/>
 
     <!-- Sender -->
     <many-to-one name="senderCompany" ref="com.axelor.apps.base.db.Company"
@@ -53,13 +58,8 @@
     <one-to-many name="bankOrderLineList" ref="BankOrderLine" mappedBy="bankOrder"
       title="Bank Order Lines" orderBy="counter"/>
 
-    <many-to-one name="signatoryUser" ref="com.axelor.auth.db.User" title="Signatory"/>
-    <many-to-one name="signatoryEbicsUser"
-      ref="com.axelor.apps.bankpayment.db.EbicsUser" title="Signatory"/>
     <many-to-one name="generatedMetaFile" ref="com.axelor.meta.db.MetaFile"
       title="Generated file"/>
-    <many-to-one name="signedMetaFile" ref="com.axelor.meta.db.MetaFile"
-      title="Signed file"/>
 
     <unique-constraint columns="bankOrderSeq,senderCompany"/>
 
@@ -73,13 +73,12 @@
 		public static final int ORDER_TYPE_NATIONAL_TREASURY_TRANSFER = 5;
 		public static final int ORDER_TYPE_INTERNATIONAL_TREASURY_TRANSFER = 6;
 		public static final int ORDER_TYPE_SEND_BANK_ORDER = 7;
+		public static final int ORDER_TYPE_BILL_OF_EXCHANGE = 8;
 
 	   	// STATUS SELECT
 		public static final int STATUS_DRAFT = 1;
-		public static final int STATUS_AWAITING_SIGNATURE = 2;
 		public static final int STATUS_VALIDATED = 3;
 		public static final int STATUS_CARRIED_OUT = 4;
-		public static final int STATUS_REJECTED = 5;
 		public static final int STATUS_CANCELED = 6;
 
 
@@ -100,11 +99,20 @@
 		public static final int TECHNICAL_ORIGIN_AUTOMATIC = 1;
 		public static final int TECHNICAL_ORIGIN_IMPORT = 2;
 
+		//FUNCTIONAL ORIGIN SELECT
+		public static final int FUNCTIONAL_ORIGIN_MANUAL = 1;
+		public static final int FUNCTIONAL_ORIGIN_INVOICE_PAYMENT = 10;
+		public static final int FUNCTIONAL_ORIGIN_EXPENSE = 20;
+		public static final int FUNCTIONAL_ORIGIN_PAYMENT_SESSION = 30;
+		public static final int FUNCTIONAL_ORIGIN_LCR = 40;
+		public static final int FUNCTIONAL_ORIGIN_BATCH = 50;
+		public static final int FUNCTIONAL_ORIGIN_BATCH_DEBIT = 51;
+		public static final int FUNCTIONAL_ORIGIN_BATCH_PAYBACK = 52;
+
 	]]></extra-code>
 
     <track>
       <field name="bankOrderDate" on="UPDATE" if="statusSelect &gt; 1"/>
-      <field name="signatoryEbicsUser" on="UPDATE" if="statusSelect &gt; 1"/>
       <field name="senderCompany" on="UPDATE" if="statusSelect &gt; 1"/>
       <field name="senderBankDetails" on="UPDATE" if="statusSelect &gt; 1"/>
       <field name="bankOrderTotalAmount" on="UPDATE" if="statusSelect &gt; 1"/>

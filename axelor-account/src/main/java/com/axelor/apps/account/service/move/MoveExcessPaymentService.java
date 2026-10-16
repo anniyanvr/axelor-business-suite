@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service.move;
 
@@ -22,14 +23,14 @@ import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.InvoicePayment;
 import com.axelor.apps.account.db.MoveLine;
 import com.axelor.apps.account.db.repo.MoveLineRepository;
-import com.axelor.apps.account.db.repo.MoveRepository;
 import com.axelor.apps.account.service.config.AccountConfigService;
 import com.axelor.apps.account.service.invoice.InvoiceService;
+import com.axelor.apps.account.service.moveline.MoveLineToolService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
-import com.axelor.exception.AxelorException;
 import com.axelor.inject.Beans;
 import com.google.common.collect.Lists;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.util.List;
@@ -43,19 +44,23 @@ public class MoveExcessPaymentService {
 
   protected MoveLineRepository moveLineRepository;
   protected MoveToolService moveToolService;
+  protected MoveLineToolService moveLineToolService;
 
   @Inject
   public MoveExcessPaymentService(
-      MoveLineRepository moveLineRepository, MoveToolService moveToolService) {
+      MoveLineRepository moveLineRepository,
+      MoveToolService moveToolService,
+      MoveLineToolService moveLineToolService) {
 
     this.moveLineRepository = moveLineRepository;
     this.moveToolService = moveToolService;
+    this.moveLineToolService = moveLineToolService;
   }
 
   /**
-   * Méthode permettant de récupérer les trop-perçus et une facture
+   * Method to retrieve excess payments for an invoice
    *
-   * @param invoice Une facture
+   * @param invoice An invoice
    * @return
    * @throws AxelorException
    */
@@ -67,29 +72,45 @@ public class MoveExcessPaymentService {
     List<MoveLine> advancePaymentMoveLines =
         Beans.get(InvoiceService.class).getMoveLinesFromAdvancePayments(invoice);
 
+    List<MoveLine> originalMoveLines = getOrignalInvoiceMoveLines(invoice);
+    advancePaymentMoveLines.addAll(originalMoveLines);
+
     if (accountConfig.getAutoReconcileOnInvoice()) {
       List<MoveLine> creditMoveLines =
-          moveLineRepository
-              .all()
-              .filter(
-                  "self.move.company = ?1 AND (self.move.statusSelect = ?2 OR self.move.statusSelect = ?3) AND self.move.ignoreInAccountingOk IN (false,null)"
-                      + " AND self.account.useForPartnerBalance = ?4 AND self.credit > 0 and self.amountRemaining > 0"
-                      + " AND self.partner = ?5 ORDER BY self.date ASC",
-                  company,
-                  MoveRepository.STATUS_VALIDATED,
-                  MoveRepository.STATUS_ACCOUNTED,
-                  true,
-                  invoice.getPartner())
-              .fetch();
+          moveLineToolService.getMoveExcessDueList(true, company, invoice.getPartner(), invoice);
 
-      log.debug(
-          "Nombre de trop-perçus à imputer sur la facture récupéré : {}", creditMoveLines.size());
+      log.debug("Number of overpayment to attribute to the invoice : {}", creditMoveLines.size());
       advancePaymentMoveLines.addAll(creditMoveLines);
     }
     // remove duplicates
     advancePaymentMoveLines =
         advancePaymentMoveLines.stream().distinct().collect(Collectors.toList());
     return advancePaymentMoveLines;
+  }
+
+  /**
+   * Get all customer move lines from the original invoice that have remaining credit amounts. This
+   * method handles invoices with holdbacks which have multiple customer move lines (e.g., 4111 +
+   * 4117).
+   *
+   * @param invoice The refund invoice
+   * @return List of all customer move lines with remaining credit from the original invoice
+   */
+  protected List<MoveLine> getOrignalInvoiceMoveLines(Invoice invoice) {
+    List<MoveLine> moveLines = Lists.newArrayList();
+    Invoice originalInvoice = invoice.getOriginalInvoice();
+
+    if (originalInvoice != null && originalInvoice.getMove() != null) {
+      for (MoveLine moveLine : originalInvoice.getMove().getMoveLineList()) {
+        if (moveLine.getAccount().getUseForPartnerBalance()
+            && moveLine.getCredit().compareTo(BigDecimal.ZERO) > 0
+            && moveLine.getAmountRemaining().abs().compareTo(BigDecimal.ZERO) > 0) {
+          moveLines.add(moveLine);
+        }
+      }
+    }
+
+    return moveLines;
   }
 
   public List<MoveLine> getAdvancePaymentMoveList(Invoice invoice) {

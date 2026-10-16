@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,53 +14,53 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.helpdesk.service;
 
-import com.axelor.apps.base.db.AppHelpdesk;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
-import com.axelor.apps.base.db.repo.AppHelpdeskRepository;
-import com.axelor.apps.base.db.repo.SequenceRepository;
-import com.axelor.apps.base.service.administration.SequenceService;
 import com.axelor.apps.base.service.publicHoliday.PublicHolidayService;
 import com.axelor.apps.base.service.weeklyplanning.WeeklyPlanningService;
 import com.axelor.apps.helpdesk.db.Sla;
 import com.axelor.apps.helpdesk.db.Ticket;
+import com.axelor.apps.helpdesk.db.TicketStatus;
 import com.axelor.apps.helpdesk.db.repo.SlaRepository;
-import com.axelor.apps.helpdesk.db.repo.TicketRepository;
+import com.axelor.apps.helpdesk.service.app.AppHelpdeskService;
 import com.axelor.auth.AuthUtils;
-import com.axelor.exception.AxelorException;
-import com.google.common.base.Strings;
-import com.google.inject.Inject;
-import com.google.inject.persist.Transactional;
+import com.axelor.auth.db.User;
+import com.axelor.studio.db.AppHelpdesk;
+import com.axelor.utils.helpers.date.DurationHelper;
+import com.axelor.utils.helpers.date.LocalDateHelper;
+import jakarta.inject.Inject;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 public class TicketServiceImpl implements TicketService {
 
-  @Inject private SequenceService sequenceService;
+  protected AppHelpdeskService appHelpdeskService;
 
-  @Inject private AppHelpdeskRepository appHelpdeskRepo;
+  protected SlaRepository slaRepo;
 
-  @Inject private TicketRepository ticketRepo;
+  protected PublicHolidayService publicHolidayService;
 
-  @Inject private SlaRepository slaRepo;
-
-  @Inject private PublicHolidayService publicHolidayService;
-
-  @Inject private WeeklyPlanningService weeklyPlanningService;
+  protected WeeklyPlanningService weeklyPlanningService;
 
   private LocalDateTime toDate;
 
-  /** Generate sequence of the ticket. */
-  @Override
-  public void computeSeq(Ticket ticket) {
-
-    if (Strings.isNullOrEmpty(ticket.getTicketSeq())) {
-      String ticketSeq = sequenceService.getSequenceNumber(SequenceRepository.TICKET, null);
-      ticket.setTicketSeq(ticketSeq);
-    }
+  @Inject
+  public TicketServiceImpl(
+      AppHelpdeskService appHelpdeskService,
+      SlaRepository slaRepo,
+      PublicHolidayService publicHolidayService,
+      WeeklyPlanningService weeklyPlanningService) {
+    this.appHelpdeskService = appHelpdeskService;
+    this.slaRepo = slaRepo;
+    this.publicHolidayService = publicHolidayService;
+    this.weeklyPlanningService = weeklyPlanningService;
   }
 
   /**
@@ -67,73 +68,66 @@ public class TicketServiceImpl implements TicketService {
    * is defined in SLA.
    */
   @Override
-  public void computeSLA(Ticket ticket) {
+  public Sla computeSLA(Ticket ticket) {
 
-    AppHelpdesk helpdesk = appHelpdeskRepo.all().fetchOne();
+    AppHelpdesk helpdesk = appHelpdeskService.getHelpdeskApp();
+    Sla sla = null;
 
     if (helpdesk.getIsSla()) {
 
-      Sla sla =
+      List<Sla> potentialSlaList =
           slaRepo
               .all()
               .filter(
-                  "self.team = ?1 AND self.prioritySelect = ?2 AND self.ticketType = ?3",
+                  "self.team = :team AND self.prioritySelect = :prioritySelect AND self.ticketType = :ticketType OR "
+                      + "(self.team = :team AND self.prioritySelect = :prioritySelect AND self.ticketType IS null OR "
+                      + "(self.team IS null AND self.prioritySelect = :prioritySelect AND self.ticketType = :ticketType) OR "
+                      + "(self.team = :team AND self.prioritySelect IS null AND self.ticketType = :ticketType)) OR "
+                      + "(self.team = :team AND self.prioritySelect IS null AND self.ticketType IS null OR "
+                      + "(self.team IS null AND self.prioritySelect = :prioritySelect AND self.ticketType = null) OR "
+                      + "(self.team IS null AND self.prioritySelect IS null AND self.ticketType = :ticketType)) OR "
+                      + "(self.team IS null AND self.prioritySelect IS null AND self.ticketType IS null)")
+              .bind(
+                  "team",
                   ticket.getAssignedToUser() == null
                       ? null
-                      : ticket.getAssignedToUser().getActiveTeam(),
-                  ticket.getPrioritySelect(),
-                  ticket.getTicketType())
-              .fetchOne();
+                      : ticket.getAssignedToUser().getActiveTeam())
+              .bind("prioritySelect", ticket.getPrioritySelect())
+              .bind("ticketType", ticket.getTicketType())
+              .fetch();
 
-      if (sla == null) {
-        sla =
-            slaRepo
-                .all()
-                .filter(
-                    "self.team = ?1 AND self.prioritySelect = ?2 AND self.ticketType = null OR "
-                        + "(self.team = null AND self.prioritySelect = ?2 AND self.ticketType = ?3) OR "
-                        + "(self.team = ?1 AND self.prioritySelect = null AND self.ticketType = ?3)",
-                    ticket.getAssignedToUser() == null
-                        ? null
-                        : ticket.getAssignedToUser().getActiveTeam(),
-                    ticket.getPrioritySelect(),
-                    ticket.getTicketType())
-                .fetchOne();
-      }
-      if (sla == null) {
-        sla =
-            slaRepo
-                .all()
-                .filter(
-                    "self.team = ?1 AND self.prioritySelect = null AND self.ticketType = null OR "
-                        + "(self.team = null AND self.prioritySelect = ?2 AND self.ticketType = null) OR "
-                        + "(self.team = null AND self.prioritySelect = null AND self.ticketType = ?3)",
-                    ticket.getAssignedToUser() == null
-                        ? null
-                        : ticket.getAssignedToUser().getActiveTeam(),
-                    ticket.getPrioritySelect(),
-                    ticket.getTicketType())
-                .fetchOne();
-      }
-      if (sla == null) {
-        sla =
-            slaRepo
-                .all()
-                .filter(
-                    "self.team = null AND self.prioritySelect = null AND self.ticketType = null")
-                .fetchOne();
-      }
-      if (sla != null) {
-        ticket.setSlaPolicy(sla);
-        try {
-          this.computeDuration(ticket, sla);
-        } catch (AxelorException e) {
-          e.printStackTrace();
-        }
-      } else {
+      sla =
+          potentialSlaList.stream()
+              .filter(
+                  _sla ->
+                      ticket.getTicketStatus().getPriority()
+                          < Optional.ofNullable(_sla.getReachStageTicketStatus())
+                              .map(TicketStatus::getPriority)
+                              .orElse(0))
+              .min(
+                  Comparator.comparingInt(
+                      sla2 ->
+                          Optional.ofNullable(sla2.getReachStageTicketStatus())
+                              .map(TicketStatus::getPriority)
+                              .orElse(0)))
+              .orElse(null);
+    }
+    ticket.setSlaPolicy(sla);
+    return sla;
+  }
 
-        ticket.setSlaPolicy(null);
-      }
+  @Override
+  public void computeSLAAndDeadLine(Ticket ticket) throws AxelorException {
+    if (!appHelpdeskService.getHelpdeskApp().getIsSla()) {
+      return;
+    }
+
+    Sla sla = computeSLA(ticket);
+
+    if (sla != null) {
+      this.computeDeadLine(ticket, sla);
+    } else {
+      ticket.setDeadlineDateT(null);
     }
   }
 
@@ -144,20 +138,20 @@ public class TicketServiceImpl implements TicketService {
    * @param sla
    * @throws AxelorException
    */
-  private void computeDuration(Ticket ticket, Sla sla) throws AxelorException {
+  protected void computeDeadLine(Ticket ticket, Sla sla) throws AxelorException {
 
-    if (sla.getIsWorkingDays()
-        && ticket.getAssignedToUser() != null
-        && ticket.getAssignedToUser().getActiveCompany() != null
-        && ticket.getAssignedToUser().getActiveCompany().getWeeklyPlanning() != null
-        && ticket.getAssignedToUser().getActiveCompany().getPublicHolidayEventsPlanning() != null) {
+    // Check assignedUserCompany -> Current user company -> else null
+    Company company =
+        Optional.ofNullable(ticket.getAssignedToUser())
+            .map(User::getActiveCompany)
+            .orElse(
+                Optional.ofNullable(AuthUtils.getUser()).map(User::getActiveCompany).orElse(null));
 
+    if (sla.getIsWorkingDays() && company != null && company.getWeeklyPlanning() != null) {
       if (sla.getDays() > 0) {
         LocalDateTime fromDate = ticket.getStartDateT().plusDays(1);
-        this.calculateWorkingDays(
-            fromDate, ticket.getAssignedToUser().getActiveCompany(), sla.getDays());
+        this.calculateWorkingDays(fromDate, company, sla.getDays());
         ticket.setDeadlineDateT(toDate.plusHours(sla.getHours()));
-
       } else {
         ticket.setDeadlineDateT(ticket.getStartDateT().plusHours(sla.getHours()));
       }
@@ -172,7 +166,7 @@ public class TicketServiceImpl implements TicketService {
    * @param ticket
    * @param sla
    */
-  private void calculateAllDays(Ticket ticket, Sla sla) {
+  protected void calculateAllDays(Ticket ticket, Sla sla) {
     LocalDateTime localDateTime = ticket.getStartDateT().plusDays(sla.getDays());
     localDateTime = localDateTime.plusHours(sla.getHours());
     ticket.setDeadlineDateT(localDateTime);
@@ -187,7 +181,7 @@ public class TicketServiceImpl implements TicketService {
    * @param days
    * @throws AxelorException
    */
-  private void calculateWorkingDays(LocalDateTime fromDate, Company company, int days)
+  protected void calculateWorkingDays(LocalDateTime fromDate, Company company, int days)
       throws AxelorException {
 
     if (weeklyPlanningService.getWorkingDayValueInDays(
@@ -217,28 +211,46 @@ public class TicketServiceImpl implements TicketService {
       LocalDateTime currentDate = LocalDateTime.now();
       LocalDateTime deadlineDateT = ticket.getDeadlineDateT();
 
-      ticket.setIsSlaCompleted(
-          ticket.getStatusSelect() >= ticket.getSlaPolicy().getReachStageSelect()
-              && (currentDate.isBefore(deadlineDateT) || currentDate.isEqual(deadlineDateT)));
+      if (ticket.getTicketStatus() != null
+          && ticket.getSlaPolicy().getReachStageTicketStatus() != null) {
+        ticket.setIsSlaCompleted(
+            ticket.getTicketStatus().getPriority()
+                    >= ticket.getSlaPolicy().getReachStageTicketStatus().getPriority()
+                && (currentDate.isBefore(deadlineDateT) || currentDate.isEqual(deadlineDateT)));
+      }
     }
   }
 
-  /** Ticket assign to the current user. */
   @Override
-  @Transactional
-  public void assignToMeTicket(Long id, List<?> ids) {
-
-    if (id != null) {
-      Ticket ticket = ticketRepo.find(id);
-      ticket.setAssignedToUser(AuthUtils.getUser());
-      ticketRepo.save(ticket);
-
-    } else if (!ids.isEmpty()) {
-
-      for (Ticket ticket : ticketRepo.all().filter("id in ?1", ids).fetch()) {
-        ticket.setAssignedToUser(AuthUtils.getUser());
-        ticketRepo.save(ticket);
-      }
+  public Long computeDuration(Ticket ticket) {
+    if (ticket.getStartDateT() != null
+        && ticket.getEndDateT() != null
+        && ticket.getEndDateT().isAfter(ticket.getStartDateT())) {
+      Duration duration =
+          DurationHelper.computeDuration(ticket.getStartDateT(), ticket.getEndDateT());
+      return DurationHelper.getSecondsDuration(duration);
     }
+
+    return ticket.getDuration();
+  }
+
+  @Override
+  public LocalDateTime computeEndDate(Ticket ticket) {
+    if (ticket.getStartDateT() != null
+        && ticket.getDuration() != null
+        && ticket.getDuration() != 0) {
+      return LocalDateHelper.plusSeconds(ticket.getStartDateT(), ticket.getDuration());
+    }
+
+    return ticket.getEndDateT();
+  }
+
+  @Override
+  public LocalDateTime computeStartDate(Ticket ticket) {
+    if (ticket.getEndDateT() != null && ticket.getDuration() != null && ticket.getDuration() != 0) {
+      return LocalDateHelper.minusSeconds(ticket.getEndDateT(), ticket.getDuration());
+    }
+
+    return ticket.getStartDateT();
   }
 }

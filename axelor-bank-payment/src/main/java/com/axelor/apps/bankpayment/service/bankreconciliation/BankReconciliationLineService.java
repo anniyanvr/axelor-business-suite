@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,92 +14,47 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.bankreconciliation;
 
 import com.axelor.apps.account.db.MoveLine;
-import com.axelor.apps.account.exception.IExceptionMessage;
 import com.axelor.apps.bankpayment.db.BankReconciliationLine;
 import com.axelor.apps.bankpayment.db.BankStatementLine;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
-import com.axelor.i18n.I18n;
+import com.axelor.apps.base.AxelorException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-public class BankReconciliationLineService {
+public interface BankReconciliationLineService {
 
-  public BankReconciliationLine createBankReconciliationLine(
+  BankReconciliationLine createBankReconciliationLine(
       LocalDate effectDate,
       BigDecimal debit,
       BigDecimal credit,
       String name,
       String reference,
       BankStatementLine bankStatementLine,
-      MoveLine moveLine) {
+      MoveLine moveLine);
 
-    BankReconciliationLine bankReconciliationLine = new BankReconciliationLine();
-    bankReconciliationLine.setEffectDate(effectDate);
-    bankReconciliationLine.setDebit(debit);
-    bankReconciliationLine.setCredit(credit);
-    bankReconciliationLine.setName(name);
-    bankReconciliationLine.setReference(reference);
-    bankReconciliationLine.setBankStatementLine(bankStatementLine);
-    bankReconciliationLine.setMoveLine(moveLine);
-    bankReconciliationLine.setIsPosted(false);
+  BankReconciliationLine createBankReconciliationLine(BankStatementLine bankStatementLine);
 
-    return bankReconciliationLine;
-  }
+  void checkAmount(BankReconciliationLine bankReconciliationLine) throws AxelorException;
 
-  public BankReconciliationLine createBankReconciliationLine(BankStatementLine bankStatementLine) {
+  BankReconciliationLine reconcileBRLAndMoveLine(
+      BankReconciliationLine bankReconciliationLine, MoveLine moveLine);
 
-    return this.createBankReconciliationLine(
-        bankStatementLine.getValueDate(),
-        bankStatementLine.getDebit(),
-        bankStatementLine.getCredit(),
-        bankStatementLine.getDescription(),
-        bankStatementLine.getReference(),
-        bankStatementLine,
-        null);
-  }
+  void updateBankReconciledAmounts(BankReconciliationLine bankReconciliationLine);
 
-  public void checkAmount(BankReconciliationLine bankReconciliationLine) throws AxelorException {
+  void checkIncompleteLine(BankReconciliationLine bankReconciliationLine) throws AxelorException;
 
-    MoveLine moveLine = bankReconciliationLine.getMoveLine();
+  void toggleSelected(BankReconciliationLine bankReconciliationLine);
 
-    BigDecimal bankDebit = bankReconciliationLine.getDebit();
-    BigDecimal bankCredit = bankReconciliationLine.getCredit();
-    BigDecimal moveLineDebit = moveLine.getDebit();
-    BigDecimal moveLineCredit = moveLine.getCredit();
+  void fillPartnerAndAccountFromMoveLine(
+      BankReconciliationLine bankReconciliationLine, MoveLine moveLine);
 
-    if (bankDebit.add(bankCredit).compareTo(BigDecimal.ZERO) == 0) {
-      throw new AxelorException(
-          bankReconciliationLine,
-          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.BANK_STATEMENT_3),
-          I18n.get(com.axelor.apps.base.exceptions.IExceptionMessage.EXCEPTION),
-          bankReconciliationLine.getReference() != null
-              ? bankReconciliationLine.getReference()
-              : "");
-    }
+  boolean isDebitCreditDirectionValid(
+      BankReconciliationLine bankReconciliationLine, MoveLine moveLine);
 
-    if (!(bankDebit.compareTo(BigDecimal.ZERO) > 0
-            && moveLineCredit.compareTo(BigDecimal.ZERO) > 0
-            && bankDebit.compareTo(moveLineCredit.subtract(moveLine.getBankReconciledAmount()))
-                == 0)
-        && !(bankCredit.compareTo(BigDecimal.ZERO) > 0
-            && moveLineDebit.compareTo(BigDecimal.ZERO) > 0
-            && bankCredit.compareTo(moveLineDebit.subtract(moveLine.getBankReconciledAmount()))
-                == 0)) {
-      throw new AxelorException(
-          bankReconciliationLine,
-          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.BANK_STATEMENT_2),
-          I18n.get(com.axelor.apps.base.exceptions.IExceptionMessage.EXCEPTION),
-          bankReconciliationLine.getReference() != null
-              ? bankReconciliationLine.getReference()
-              : "");
-    }
-  }
+  void checkDebitCreditDirection(BankReconciliationLine bankReconciliationLine, MoveLine moveLine)
+      throws AxelorException;
 }

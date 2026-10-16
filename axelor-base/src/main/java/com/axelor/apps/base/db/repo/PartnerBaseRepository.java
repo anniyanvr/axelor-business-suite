@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,48 +14,32 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.db.repo;
 
 import com.axelor.apps.base.db.Partner;
-import com.axelor.apps.base.db.PartnerAddress;
+import com.axelor.apps.base.service.MetaFileService;
 import com.axelor.apps.base.service.PartnerService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.auth.db.User;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.inject.Beans;
-import com.google.common.collect.Lists;
-import java.util.List;
-import java.util.Map;
-import javax.persistence.PersistenceException;
+import com.axelor.meta.db.MetaFile;
+import jakarta.persistence.PersistenceException;
 
 public class PartnerBaseRepository extends PartnerRepository {
 
   @Override
   public Partner save(Partner partner) {
     try {
-      Beans.get(PartnerService.class).onSave(partner);
+      PartnerService partnerService = Beans.get(PartnerService.class);
+      partnerService.onSave(partner);
+      partnerService.setDefaultPartnerAddress(partner);
       return super.save(partner);
     } catch (Exception e) {
       TraceBackService.traceExceptionFromSaveMethod(e);
-      throw new PersistenceException(e);
+      throw new PersistenceException(e.getMessage(), e);
     }
-  }
-
-  @Override
-  public Map<String, Object> populate(Map<String, Object> json, Map<String, Object> context) {
-    if (!context.containsKey("json-enhance")) {
-      return json;
-    }
-    try {
-      Long id = (Long) json.get("id");
-      Partner partner = find(id);
-      json.put("address", Beans.get(PartnerService.class).getDefaultAddress(partner));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    return json;
   }
 
   @Override
@@ -65,19 +50,15 @@ public class PartnerBaseRepository extends PartnerRepository {
     copy.setPartnerSeq(null);
     copy.setEmailAddress(null);
 
-    PartnerAddressRepository partnerAddressRepository = Beans.get(PartnerAddressRepository.class);
-
-    List<PartnerAddress> partnerAddressList = Lists.newArrayList();
-
-    if (deep && copy.getPartnerAddressList() != null) {
-      for (PartnerAddress partnerAddress : copy.getPartnerAddressList()) {
-
-        partnerAddressList.add(partnerAddressRepository.copy(partnerAddress, deep));
+    try {
+      MetaFile picture = copy.getPicture();
+      if (picture != null) {
+        MetaFile pictureCopy = Beans.get(MetaFileService.class).copyMetaFile(picture);
+        copy.setPicture(pictureCopy);
       }
+    } catch (Exception e) {
+      throw new PersistenceException(e);
     }
-    copy.setPartnerAddressList(partnerAddressList);
-    copy.setBlockingList(null);
-    copy.setBankDetailsList(null);
 
     return copy;
   }

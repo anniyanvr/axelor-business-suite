@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <domain-models xmlns="http://axelor.com/xml/ns/domain-models"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models http://axelor.com/xml/ns/domain-models/domain-models_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models https://axelor.com/xml/ns/domain-models/domain-models_8.2.xsd">
 
   <module name="purchase" package="com.axelor.apps.purchase.db"/>
 
-  <entity name="PurchaseOrder" lang="java">
+  <entity name="PurchaseOrder"
+    implements="com.axelor.apps.base.interfaces.PricedOrder,com.axelor.apps.base.interfaces.Currenciable,com.axelor.apps.base.interfaces.ShippableOrder">
 
     <string name="fullName" namecolumn="true">
-  	<![CDATA[
-  		if(purchaseOrderSeq==null){
-  			return " ";
-  		}
-  		return purchaseOrderSeq + "-" + supplierPartner.getName();
-  	]]>
+	<![CDATA[
+		if (purchaseOrderSeq == null) {
+			return " ";
+		}
+		if (supplierPartner == null) {
+			return purchaseOrderSeq;
+		}
+		return purchaseOrderSeq + "-" + supplierPartner.getName();
+	]]>
     </string>
     <string name="purchaseOrderSeq" title="Ref." readonly="true"/>
     <many-to-one name="company" ref="com.axelor.apps.base.db.Company" required="true"
@@ -30,18 +34,24 @@
     <many-to-one name="buyerUser" ref="com.axelor.auth.db.User" title="Buyer"/>
     <many-to-one name="currency" ref="com.axelor.apps.base.db.Currency" title="Currency"
       required="true"/>
-    <date name="deliveryDate" title="Estimated delivery Date"/>
+    <date name="estimatedReceiptDate" title="Estimated receipt date"/>
     <date name="orderDate" title="Order Date"/>
     <one-to-many name="purchaseOrderLineList" mappedBy="purchaseOrder"
-      ref="com.axelor.apps.purchase.db.PurchaseOrderLine" title="Products list"/>
+      ref="com.axelor.apps.purchase.db.PurchaseOrderLine" title="Products list" orderBy="sequence"/>
     <integer name="statusSelect" title="Status"
       selection="purchase.purchase.order.status.select" readonly="true"/>
     <string name="externalReference" title="Supplier ref."/>
     <string name="internalReference" title="Internal Ref."/>
     <integer name="receiptState" title="Receipt State"
       selection="purchase.order.receipt.state" readonly="true" default="1"/>
+    <decimal name="advanceTotal" title="Advance payment total" scale="3" precision="20"
+      readonly="true"/>
 
-
+    <!-- Tax Number and FiscalPosition -->
+    <many-to-one name="taxNumber" title="Tax number"
+      ref="com.axelor.apps.account.db.TaxNumber"/>
+    <many-to-one name="fiscalPosition" title="Fiscal position"
+      ref="com.axelor.apps.account.db.FiscalPosition"/>
 
     <!-- Ligne de TVA -->
     <one-to-many name="purchaseOrderLineTaxList"
@@ -51,19 +61,20 @@
     <!-- Validation and totals -->
     <many-to-one name="validatedByUser" ref="com.axelor.auth.db.User" readonly="true"
       title="Validated by"/>
-    <date name="validationDate" title="Validation date" readonly="true"/>
-    <decimal name="exTaxTotal" title="Total W.T." scale="2" precision="20" readonly="true"/>
-    <decimal name="taxTotal" title="Total Tax" scale="2" precision="20" readonly="true"/>
-    <decimal name="inTaxTotal" title="Total A.T.I." scale="2" precision="20" readonly="true"/>
+    <datetime name="validationDateTime" title="Validation date" readonly="true"/>
+    <decimal name="exTaxTotal" title="Total W.T." scale="3" precision="20" readonly="true"/>
+    <decimal name="taxTotal" title="Total Tax" scale="3" precision="20" readonly="true"/>
+    <decimal name="inTaxTotal" title="Total A.T.I." scale="3" precision="20" readonly="true"/>
     <decimal name="amountToBeSpreadOverTheTimetable"
-      title="Amount to be spread over the timetable" scale="2" precision="20" readonly="true"/>
+      title="Amount to be spread over the timetable" scale="3" precision="20" readonly="true"/>
 
-    <decimal name="companyExTaxTotal" title="Total W.T." scale="2" precision="20"
+    <decimal name="companyExTaxTotal" title="Total W.T." scale="3" precision="20"
       readonly="true"/>
 
     <!-- Notes -->
     <string name="notes" large="true" multiline="true" title="Description To Display"/>
     <string name="internalNote" large="true" multiline="true" title="Internal Note"/>
+    <string name="specificNotes" title="Specific notes" large="true"/>
 
     <integer name="versionNumber" title="Version Number" readonly="true" default="1"/>
 
@@ -81,6 +92,21 @@
     <many-to-one name="printingSettings" ref="com.axelor.apps.base.db.PrintingSettings"/>
     <boolean name="groupProductsOnPrintings" title="Group products on printings"
       default="false"/>
+
+    <many-to-one name="companyCurrency" transient="true"
+      ref="com.axelor.apps.base.db.Currency">
+      <![CDATA[
+      return company != null ? company.getCurrency() : null;
+	    ]]>
+    </many-to-one>
+
+    <integer name="typeSelect" title="Type" selection="purchase.purchase.order.type.select"
+      default="1"/>
+
+    <boolean name="orderBeingEdited" title="Order being edited"/>
+
+    <many-to-one name="callTender" title="Call for tenders"
+      ref="com.axelor.apps.purchase.db.CallTender"/>
 
     <unique-constraint columns="purchaseOrderSeq,company"/>
 
@@ -105,6 +131,8 @@
 
 		  public static final int INVOICING_BY_DELIVERY = 2;
 		  public static final int INVOICING_PER_ORDER = 3;
+
+		  public static final int TYPE_STANDARD = 1;
    		]]>
     </extra-code>
 
@@ -112,6 +140,7 @@
       <field name="purchaseOrderSeq"/>
       <field name="supplierPartner"/>
       <field name="statusSelect" on="UPDATE"/>
+      <field name="estimatedReceiptDate"/>
       <message if="true" on="CREATE">Purchase order created</message>
       <message if="statusSelect == 1" tag="important">Draft</message>
       <message if="statusSelect == 2" tag="important">Requested</message>

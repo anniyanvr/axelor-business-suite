@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,152 +14,95 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.purchase.service;
 
-import com.axelor.apps.base.db.Product;
-import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.purchase.db.PurchaseOrder;
-import com.axelor.apps.purchase.db.PurchaseOrderLine;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.Company;
+import com.axelor.apps.base.db.TradingName;
 import com.axelor.apps.purchase.db.PurchaseRequest;
-import com.axelor.apps.purchase.db.PurchaseRequestLine;
-import com.axelor.apps.purchase.db.repo.PurchaseOrderLineRepository;
-import com.axelor.apps.purchase.db.repo.PurchaseOrderRepository;
 import com.axelor.apps.purchase.db.repo.PurchaseRequestRepository;
+import com.axelor.apps.purchase.service.purchase.request.PurchaseRequestToPoCreateService;
+import com.axelor.apps.purchase.service.purchase.request.PurchaseRequestToPoGenerationResult;
 import com.axelor.auth.AuthUtils;
-import com.axelor.exception.AxelorException;
-import com.google.inject.Inject;
+import com.axelor.auth.db.User;
 import com.google.inject.persist.Transactional;
-import java.util.ArrayList;
+import jakarta.inject.Inject;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
 public class PurchaseRequestServiceImpl implements PurchaseRequestService {
 
-  @Inject private PurchaseRequestRepository purchaseRequestRepo;
-  @Inject private PurchaseOrderService purchaseOrderService;
-  @Inject private PurchaseOrderLineService purchaseOrderLineService;
-  @Inject private PurchaseOrderRepository purchaseOrderRepo;
-  @Inject private PurchaseOrderLineRepository purchaseOrderLineRepo;
-  @Inject private AppBaseService appBaseService;
+  protected final PurchaseRequestWorkflowService purchaseRequestWorkflowService;
+  protected final PurchaseRequestRepository purchaseRequestRepository;
+  protected final PurchaseRequestToPoCreateService purchaseRequestToPoCreateService;
 
-  @Transactional
-  @Override
-  public void confirmCart() {
-
-    List<PurchaseRequest> purchaseRequests =
-        purchaseRequestRepo
-            .all()
-            .filter("self.statusSelect = 1 and self.createdBy = ?1", AuthUtils.getUser())
-            .fetch();
-
-    for (PurchaseRequest purchaseRequest : purchaseRequests) {
-      purchaseRequest.setStatusSelect(2);
-      purchaseRequestRepo.save(purchaseRequest);
-    }
+  @Inject
+  public PurchaseRequestServiceImpl(
+      PurchaseRequestWorkflowService purchaseRequestWorkflowService,
+      PurchaseRequestRepository purchaseRequestRepository,
+      PurchaseRequestToPoCreateService purchaseRequestToPoCreateService) {
+    this.purchaseRequestWorkflowService = purchaseRequestWorkflowService;
+    this.purchaseRequestRepository = purchaseRequestRepository;
+    this.purchaseRequestToPoCreateService = purchaseRequestToPoCreateService;
   }
 
-  @Transactional
   @Override
-  public void acceptRequest(List<PurchaseRequest> purchaseRequests) {
-
-    for (PurchaseRequest purchaseRequest : purchaseRequests) {
-      purchaseRequest.setStatusSelect(3);
-      purchaseRequestRepo.save(purchaseRequest);
-    }
-  }
-
   @Transactional(rollbackOn = {Exception.class})
-  @Override
-  public List<PurchaseOrder> generatePo(
-      List<PurchaseRequest> purchaseRequests, Boolean groupBySupplier, Boolean groupByProduct)
+  public PurchaseRequestToPoGenerationResult generatePo(
+      List<PurchaseRequest> purchaseRequests,
+      Boolean groupBySupplier,
+      Boolean groupByProduct,
+      Company company)
       throws AxelorException {
+    PurchaseRequestToPoGenerationResult result =
+        purchaseRequestToPoCreateService.createFromRequests(
+            purchaseRequests, groupBySupplier, groupByProduct, company);
 
-    List<PurchaseOrderLine> purchaseOrderLineList = new ArrayList<PurchaseOrderLine>();
-    Map<String, PurchaseOrder> purchaseOrderMap = new HashMap<>();
-
-    for (PurchaseRequest purchaseRequest : purchaseRequests) {
-      PurchaseOrder purchaseOrder;
-
-      String key = groupBySupplier ? getPurchaseOrderGroupBySupplierKey(purchaseRequest) : null;
-      if (key != null && purchaseOrderMap.containsKey(key)) {
-        purchaseOrder = purchaseOrderMap.get(key);
-      } else {
-        purchaseOrder = createPurchaseOrder(purchaseRequest);
-        key = key == null ? purchaseRequest.getId().toString() : key;
-        purchaseOrderMap.put(key, purchaseOrder);
+    for (PurchaseRequest pr : purchaseRequests) {
+      if (pr.getPurchaseOrder() != null) {
+        pr.setStatusSelect(PurchaseRequestRepository.STATUS_PURCHASED);
       }
-
-      if (purchaseOrder == null) {
-        purchaseOrder = createPurchaseOrder(purchaseRequest);
-      }
-
-      for (PurchaseRequestLine purchaseRequestLine : purchaseRequest.getPurchaseRequestLineList()) {
-        PurchaseOrderLine purchaseOrderLine = new PurchaseOrderLine();
-        Product product = purchaseRequestLine.getProduct();
-
-        purchaseOrderLine =
-            groupByProduct && purchaseOrder != null
-                ? getPoLineByProduct(product, purchaseOrder)
-                : null;
-
-        purchaseOrderLine =
-            purchaseOrderLineService.createPurchaseOrderLine(
-                purchaseOrder,
-                product,
-                purchaseRequestLine.getNewProduct() ? purchaseRequestLine.getProductTitle() : null,
-                null,
-                purchaseRequestLine.getQuantity(),
-                purchaseRequestLine.getUnit());
-        purchaseOrder.addPurchaseOrderLineListItem(purchaseOrderLine);
-        purchaseOrderLineList.add(purchaseOrderLine);
-        purchaseOrderLineService.compute(purchaseOrderLine, purchaseOrder);
-      }
-      purchaseOrder.getPurchaseOrderLineList().addAll(purchaseOrderLineList);
-      purchaseOrderService.computePurchaseOrder(purchaseOrder);
-      purchaseOrderRepo.save(purchaseOrder);
-      purchaseRequest.setPurchaseOrder(purchaseOrder);
-      purchaseRequestRepo.save(purchaseRequest);
     }
-    List<PurchaseOrder> purchaseOrders =
-        purchaseOrderMap.values().stream().collect(Collectors.toList());
-    return purchaseOrders;
+    return result;
   }
 
-  private PurchaseOrderLine getPoLineByProduct(Product product, PurchaseOrder purchaseOrder) {
-
-    PurchaseOrderLine purchaseOrderLine =
-        purchaseOrder.getPurchaseOrderLineList() != null
-                && !purchaseOrder.getPurchaseOrderLineList().isEmpty()
-            ? purchaseOrder.getPurchaseOrderLineList().stream()
-                .filter(poLine -> poLine.getProduct().equals(product))
-                .findFirst()
-                .orElse(null)
-            : null;
-    return purchaseOrderLine;
-  }
-
-  protected PurchaseOrder createPurchaseOrder(PurchaseRequest purchaseRequest)
+  @Override
+  public Map<String, Object> getDefaultValues(PurchaseRequest purchaseRequest, Company company)
       throws AxelorException {
-    return purchaseOrderRepo.save(
-        purchaseOrderService.createPurchaseOrder(
-            AuthUtils.getUser(),
-            purchaseRequest.getCompany(),
-            null,
-            purchaseRequest.getSupplierUser().getCurrency(),
-            null,
-            null,
-            null,
-            appBaseService.getTodayDate(purchaseRequest.getCompany()),
-            null,
-            purchaseRequest.getSupplierUser(),
-            null));
+    Map<String, Object> values = new HashMap<>();
+    User user = AuthUtils.getUser();
+    if (company == null) {
+      company = Optional.ofNullable(user).map(User::getActiveCompany).orElse(null);
+    }
+    purchaseRequest.setCompany(company);
+    values.put("company", purchaseRequest.getCompany());
+    if (user != null) {
+      TradingName tradingName = user.getTradingName();
+      values.put("tradingName", tradingName);
+      purchaseRequest.setTradingName(tradingName);
+    }
+    return values;
   }
 
-  protected String getPurchaseOrderGroupBySupplierKey(PurchaseRequest purchaseRequest) {
-    return purchaseRequest.getSupplierUser().getId().toString();
+  @Override
+  public PurchaseRequest createPurchaseRequest(Company company, Integer status, String description)
+      throws AxelorException {
+    PurchaseRequest purchaseRequest = new PurchaseRequest();
+    getDefaultValues(purchaseRequest, company);
+    setStatus(purchaseRequest, status);
+    purchaseRequest.setDescription(description);
+    return purchaseRequest;
+  }
+
+  protected void setStatus(PurchaseRequest purchaseRequest, Integer status) throws AxelorException {
+    if (status != null && status == PurchaseRequestRepository.STATUS_REQUESTED) {
+      purchaseRequestWorkflowService.requestPurchaseRequest(purchaseRequest);
+    } else {
+      purchaseRequest.setStatusSelect(PurchaseRequestRepository.STATUS_DRAFT);
+    }
   }
 }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,25 +14,28 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.tax;
 
 import com.axelor.apps.account.db.AccountManagement;
 import com.axelor.apps.account.db.FiscalPosition;
 import com.axelor.apps.account.db.Tax;
+import com.axelor.apps.account.db.TaxEquiv;
 import com.axelor.apps.account.db.TaxLine;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.ProductFamily;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.i18n.I18n;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
+import org.apache.commons.collections.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,9 +46,9 @@ public class AccountManagementServiceImpl implements AccountManagementService {
   protected static final int CONFIG_OBJECT_PRODUCT = 1;
   protected static final int CONFIG_OBJECT_PRODUCT_FAMILY = 2;
 
-  private FiscalPositionService fiscalPositionService;
+  protected FiscalPositionService fiscalPositionService;
 
-  private TaxService taxService;
+  protected TaxService taxService;
 
   @Inject
   public AccountManagementServiceImpl(
@@ -113,6 +117,7 @@ public class AccountManagementServiceImpl implements AccountManagementService {
    * @param company
    * @return
    */
+  @Override
   public AccountManagement getAccountManagement(
       List<AccountManagement> accountManagements, Company company) {
 
@@ -122,12 +127,20 @@ public class AccountManagementServiceImpl implements AccountManagementService {
 
     for (AccountManagement accountManagement : accountManagements) {
       if (accountManagement.getCompany().equals(company)) {
-        LOG.debug("Obtention de la configuration comptable => société: {}", company.getName());
+        LOG.debug("Get account management configuration => company: {}", company.getName());
 
         return accountManagement;
       }
     }
     return null;
+  }
+
+  @Override
+  public TaxEquiv getProductTaxEquiv(
+      Product product, Company company, FiscalPosition fiscalPosition, boolean isPurchase)
+      throws AxelorException {
+    Set<Tax> taxSet = getProductTax(product, company, isPurchase);
+    return fiscalPositionService.getTaxEquiv(fiscalPosition, taxSet);
   }
 
   /**
@@ -140,31 +153,50 @@ public class AccountManagementServiceImpl implements AccountManagementService {
    * @return the tax defined for the product, according to the fiscal position
    * @throws AxelorException
    */
-  @Override
-  public Tax getProductTax(
+  protected Set<Tax> getProductTax(
       Product product, Company company, FiscalPosition fiscalPosition, boolean isPurchase)
       throws AxelorException {
+    Set<Tax> generalTaxSet = this.getProductTax(product, company, isPurchase);
+    Set<Tax> taxSet = fiscalPositionService.getTaxSet(fiscalPosition, generalTaxSet);
 
-    LOG.debug(
-        "Get the tax for the product {} (company : {}, purchase : {}, fiscal position : {})",
-        new Object[] {
-          product.getCode(),
-          company.getName(),
-          isPurchase,
-          fiscalPosition != null ? fiscalPosition.getCode() : null
-        });
-
-    Tax generalTax = this.getProductTax(product, company, isPurchase, CONFIG_OBJECT_PRODUCT);
-
-    Tax tax = fiscalPositionService.getTax(fiscalPosition, generalTax);
-
-    if (tax != null) {
-      return tax;
+    if (CollectionUtils.isNotEmpty(taxSet)) {
+      return taxSet;
     }
 
     throw new AxelorException(
         TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-        I18n.get(IExceptionMessage.ACCOUNT_MANAGEMENT_3),
+        I18n.get(BaseExceptionMessage.ACCOUNT_MANAGEMENT_3),
+        product.getCode(),
+        company.getName());
+  }
+
+  /**
+   * Get product tax before using tax equiv from fiscal position.
+   *
+   * @param product
+   * @param company
+   * @param isPurchase specify if we want get the tax for purchase or sale
+   * @return the tax defined for the product
+   * @throws AxelorException
+   */
+  protected Set<Tax> getProductTax(Product product, Company company, boolean isPurchase)
+      throws AxelorException {
+
+    LOG.debug(
+        "Get the tax for the product {} (company : {}, purchase : {}",
+        product.getCode(),
+        company.getName(),
+        isPurchase);
+
+    Set<Tax> taxSet = this.getProductTax(product, company, isPurchase, CONFIG_OBJECT_PRODUCT);
+
+    if (CollectionUtils.isNotEmpty(taxSet)) {
+      return taxSet;
+    }
+
+    throw new AxelorException(
+        TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+        I18n.get(BaseExceptionMessage.ACCOUNT_MANAGEMENT_3),
         product.getCode(),
         company.getName());
   }
@@ -181,26 +213,26 @@ public class AccountManagementServiceImpl implements AccountManagementService {
    * @return
    * @throws AxelorException
    */
-  protected Tax getProductTax(
+  protected Set<Tax> getProductTax(
       Product product, Company company, boolean isPurchase, int configObject) {
 
     AccountManagement accountManagement = this.getAccountManagement(product, company, configObject);
 
-    Tax tax = null;
+    Set<Tax> taxSet = null;
 
     if (accountManagement != null) {
       if (isPurchase) {
-        tax = accountManagement.getPurchaseTax();
+        taxSet = accountManagement.getPurchaseTaxSet();
       } else {
-        tax = accountManagement.getSaleTax();
+        taxSet = accountManagement.getSaleTaxSet();
       }
     }
 
-    if (tax == null && configObject == CONFIG_OBJECT_PRODUCT) {
+    if (CollectionUtils.isEmpty(taxSet) && configObject == CONFIG_OBJECT_PRODUCT) {
       return getProductTax(product, company, isPurchase, CONFIG_OBJECT_PRODUCT_FAMILY);
     }
 
-    return tax;
+    return taxSet;
   }
 
   /**
@@ -212,7 +244,7 @@ public class AccountManagementServiceImpl implements AccountManagementService {
    * @throws AxelorException
    */
   @Override
-  public TaxLine getTaxLine(
+  public Set<TaxLine> getTaxLineSet(
       LocalDate date,
       Product product,
       Company company,
@@ -220,16 +252,16 @@ public class AccountManagementServiceImpl implements AccountManagementService {
       boolean isPurchase)
       throws AxelorException {
 
-    TaxLine taxLine =
-        taxService.getTaxLine(
+    Set<TaxLine> taxLineSet =
+        taxService.getTaxLineSet(
             this.getProductTax(product, company, fiscalPosition, isPurchase), date);
-    if (taxLine != null) {
-      return taxLine;
+    if (CollectionUtils.isNotEmpty(taxLineSet)) {
+      return taxLineSet;
     }
 
     throw new AxelorException(
         TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-        I18n.get(IExceptionMessage.ACCOUNT_MANAGEMENT_2),
+        I18n.get(BaseExceptionMessage.ACCOUNT_MANAGEMENT_2),
         product.getCode());
   }
 }

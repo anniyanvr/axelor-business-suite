@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,20 +14,21 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.production.service.costsheet;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.repo.ProductRepository;
 import com.axelor.apps.base.service.ProductCompanyService;
+import com.axelor.apps.base.service.app.AppBaseService;
 import com.axelor.apps.production.db.CostSheet;
-import com.axelor.apps.production.db.UnitCostCalcLine;
-import com.axelor.apps.production.db.UnitCostCalculation;
-import com.axelor.apps.production.db.repo.UnitCostCalcLineRepository;
-import com.axelor.exception.AxelorException;
-import com.google.inject.Inject;
+import com.axelor.apps.supplychain.db.UnitCostCalcLine;
+import com.axelor.apps.supplychain.db.UnitCostCalculation;
+import com.axelor.apps.supplychain.db.repo.UnitCostCalcLineRepository;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import org.slf4j.Logger;
@@ -39,15 +41,19 @@ public class UnitCostCalcLineServiceImpl implements UnitCostCalcLineService {
   protected ProductRepository productRepository;
   protected UnitCostCalcLineRepository unitCostCalcLineRepository;
   protected ProductCompanyService productCompanyService;
+  protected AppBaseService appService;
 
   @Inject
   public UnitCostCalcLineServiceImpl(
       UnitCostCalcLineRepository unitCostCalcLineRepository,
-      ProductCompanyService productCompanyService) {
+      ProductCompanyService productCompanyService,
+      AppBaseService appService) {
     this.unitCostCalcLineRepository = unitCostCalcLineRepository;
     this.productCompanyService = productCompanyService;
+    this.appService = appService;
   }
 
+  @Override
   public UnitCostCalcLine createUnitCostCalcLine(
       Product product, Company company, int maxLevel, CostSheet costSheet) throws AxelorException {
 
@@ -57,8 +63,10 @@ public class UnitCostCalcLineServiceImpl implements UnitCostCalcLineService {
     unitCostCalcLine.setPreviousCost(
         (BigDecimal) productCompanyService.get(product, "costPrice", company));
     unitCostCalcLine.setCostSheet(costSheet);
-    unitCostCalcLine.setComputedCost(costSheet.getCostPrice());
-    unitCostCalcLine.setCostToApply(costSheet.getCostPrice());
+
+    BigDecimal costPrice = costSheet.getCostPrice();
+    unitCostCalcLine.setComputedCost(costPrice);
+    unitCostCalcLine.setCostToApply(costPrice);
     unitCostCalcLine.setMaxLevel(maxLevel);
 
     return unitCostCalcLine;

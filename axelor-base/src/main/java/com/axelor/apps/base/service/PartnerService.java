@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,17 +14,17 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Address;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Currency;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.PriceList;
-import com.axelor.apps.message.db.EmailAddress;
-import com.axelor.exception.AxelorException;
+import com.axelor.message.db.EmailAddress;
 import com.axelor.meta.CallMethod;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,8 @@ public interface PartnerService {
 
   void onSave(Partner partner) throws AxelorException;
 
+  void updatePartnerAddress(Partner partner) throws AxelorException;
+
   void setPartnerFullName(Partner partner);
 
   @CallMethod
@@ -62,11 +65,10 @@ public interface PartnerService {
 
   Map<String, String> getSocialNetworkUrl(String name, String firstName, Integer typeSelect);
 
-  List<Long> findPartnerMails(Partner partner);
+  @Deprecated
+  List<Long> findPartnerMails(Partner partner, int emailType);
 
-  List<Long> findContactMails(Partner partner);
-
-  List<Long> findMailsFromPartner(Partner partner);
+  List<Long> findMailsFromPartner(Partner partner, int emailType);
 
   void resetDefaultAddress(Partner partner, String addrTypeQuery);
 
@@ -88,8 +90,6 @@ public interface PartnerService {
   BankDetails getDefaultBankDetails(Partner partner);
 
   String getSIRENNumber(Partner partner) throws AxelorException;
-
-  void convertToIndividualPartner(Partner partner);
 
   /**
    * Check if the partner in view has a duplicate.
@@ -116,12 +116,12 @@ public interface PartnerService {
   PriceList getSalePriceList(Partner partner);
 
   /**
-   * Get the partner language code. If null, return the default partner language.
+   * Get the partner Localization.code. If null, return the default partner locale.
    *
    * @param partner
    * @return
    */
-  String getPartnerLanguageCode(Partner partner);
+  String getPartnerLocale(Partner partner);
 
   /**
    * Normalize phone number.
@@ -147,15 +147,13 @@ public interface PartnerService {
    */
   String getPhoneNumberFieldName(String actionName);
 
-  void setCompanyStr(Partner partner);
+  public List<Partner> getParentPartnerList(Partner partner);
 
-  String computeCompanyStr(Partner partner);
+  List<Partner> getFilteredPartners(Partner partner);
 
-  String getPartnerDomain(Partner partner);
+  List<Partner> getContactFilteredPartners(Partner partner);
 
-  String getTaxNbrFromRegistrationCode(Partner partner);
+  String checkIfRegistrationCodeExists(Partner partner);
 
-  String getNicFromRegistrationCode(Partner partner);
-
-  String getSirenFromRegistrationCode(Partner partner);
+  void setDefaultPartnerAddress(Partner partner);
 }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,13 +14,15 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.bankorder.file.transfer;
 
 import com.axelor.apps.bankpayment.db.BankOrder;
 import com.axelor.apps.bankpayment.db.BankOrderLine;
 import com.axelor.apps.bankpayment.service.bankorder.file.BankOrderFileService;
+import com.axelor.apps.bankpayment.service.bankorder.file.address.BankOrderAddressService;
+import com.axelor.apps.bankpayment.service.bankorder.file.address.BankOrderFile00100103AddressAdapter;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.AccountIdentification4Choice;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.ActiveOrHistoricCurrencyAndAmount;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.AmountType3Choice;
@@ -39,21 +42,21 @@ import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.PaymentMethod3Code;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.PaymentTypeInformation19;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.RemittanceInformation5;
 import com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03.ServiceLevel8Choice;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Bank;
 import com.axelor.apps.base.db.BankDetails;
-import com.axelor.exception.AxelorException;
+import com.axelor.inject.Beans;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.io.File;
-import java.io.IOException;
 import java.time.format.DateTimeFormatter;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
 import javax.xml.datatype.DatatypeFactory;
 
 public class BankOrderFile00100103Service extends BankOrderFileService {
 
   protected static final String BIC_NOT_PROVIDED = "NOTPROVIDED";
+
+  protected BankOrderAddressService bankOrderAddressService;
 
   @Inject
   public BankOrderFile00100103Service(BankOrder bankOrder) {
@@ -62,21 +65,17 @@ public class BankOrderFile00100103Service extends BankOrderFileService {
 
     context = "com.axelor.apps.bankpayment.xsd.sepa.pain_001_001_03";
     fileExtension = FILE_EXTENSION_XML;
+    bankOrderAddressService = Beans.get(BankOrderAddressService.class);
   }
 
   /**
    * Method to create an XML file for SEPA transfer pain.001.001.03
    *
    * @throws AxelorException
-   * @throws DatatypeConfigurationException
-   * @throws JAXBException
-   * @throws IOException
    */
   @Override
-  public File generateFile()
-      throws JAXBException, IOException, AxelorException, DatatypeConfigurationException {
-
-    DatatypeFactory datatypeFactory = DatatypeFactory.newInstance();
+  public File generateFile() throws AxelorException {
+    DatatypeFactory datatypeFactory = DatatypeFactory.newDefaultInstance();
 
     ObjectFactory factory = new ObjectFactory();
 
@@ -89,6 +88,9 @@ public class BankOrderFile00100103Service extends BankOrderFileService {
     // Payer
     PartyIdentification32 dbtr = factory.createPartyIdentification32();
     dbtr.setNm(senderBankDetails.getOwnerName());
+    dbtr.setPstlAdr(
+        BankOrderFile00100103AddressAdapter.createPostalAddress(
+            bankOrderAddressService.createSenderPostalAddress(senderCompany, bankOrderFileFormat)));
 
     // IBAN
     AccountIdentification4Choice iban = factory.createAccountIdentification4Choice();
@@ -145,8 +147,8 @@ public class BankOrderFile00100103Service extends BankOrderFileService {
 
       // Amount
       instdAmt = factory.createActiveOrHistoricCurrencyAndAmount();
-      instdAmt.setCcy(bankOrderCurrency.getCode());
-      instdAmt.setValue(bankOrderLine.getBankOrderAmount());
+      instdAmt.setCcy(companyCurrency.getCodeISO());
+      instdAmt.setValue(bankOrderLine.getCompanyCurrencyAmount());
 
       amt = factory.createAmountType3Choice();
       amt.setInstdAmt(instdAmt);
@@ -154,6 +156,10 @@ public class BankOrderFile00100103Service extends BankOrderFileService {
       // Receiver
       cbtr = factory.createPartyIdentification32();
       cbtr.setNm(receiverBankDetails.getOwnerName());
+      cbtr.setPstlAdr(
+          BankOrderFile00100103AddressAdapter.createPostalAddress(
+              bankOrderAddressService.createReceiverPostalAddress(
+                  bankOrderLine, bankOrderFileFormat)));
 
       // IBAN
       iban = factory.createAccountIdentification4Choice();
@@ -184,7 +190,7 @@ public class BankOrderFile00100103Service extends BankOrderFileService {
       }
 
       if (!Strings.isNullOrEmpty(ustrd)) {
-        rmtInf.getUstrd().add(ustrd);
+        rmtInf.getUstrd().add(ustrd.substring(0, Math.min(140, ustrd.length() - 1)));
       }
 
       //			StructuredRemittanceInformation7 strd = factory.createStructuredRemittanceInformation7();

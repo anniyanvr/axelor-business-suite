@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,124 +14,113 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.administration;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Sequence;
 import com.axelor.apps.base.db.SequenceLettersTypeSelect;
-import com.axelor.apps.base.db.SequenceTypeSelect;
 import com.axelor.apps.base.db.SequenceVersion;
 import com.axelor.apps.base.db.repo.SequenceRepository;
 import com.axelor.apps.base.db.repo.SequenceVersionRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.tool.StringTool;
+import com.axelor.common.ObjectUtils;
 import com.axelor.db.Model;
-import com.axelor.event.Observes;
-import com.axelor.events.ShutdownEvent;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.db.MetaSelectItem;
 import com.axelor.meta.db.repo.MetaSelectItemRepository;
+import com.axelor.script.ScriptAllowed;
+import com.axelor.utils.helpers.StringHelper;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoField;
 import java.time.temporal.IsoFields;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import javax.annotation.concurrent.ThreadSafe;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@ScriptAllowed
 @ThreadSafe
 @Singleton
 public class SequenceService {
 
-  private static final String DRAFT_PREFIX = "#";
+  protected static final String DRAFT_PREFIX = "#";
 
-  private static final String PATTERN_FULL_YEAR = "%YYYY",
-      PATTERN_YEAR = "%YY",
-      PATTERN_MONTH = "%M",
-      PATTERN_FULL_MONTH = "%FM",
-      PATTERN_DAY = "%D",
-      PATTERN_WEEK = "%WY",
-      PADDING_STRING = "0";
+  protected static final String PATTERN_FULL_YEAR = "%YYYY";
+  protected static final String PATTERN_YEAR = "%YY";
+  protected static final String PATTERN_MONTH = "%M";
+  protected static final String PATTERN_FULL_MONTH = "%FM";
+  protected static final String PATTERN_DAY = "%D";
+  protected static final String PATTERN_WEEK = "%WY";
+  protected static final int SEQ_MAX_LENGTH = 14;
 
-  private final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  protected final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  private final SequenceVersionRepository sequenceVersionRepository;
+  protected final SequenceVersionRepository sequenceVersionRepository;
 
-  private final AppBaseService appBaseService;
+  protected final SequenceVersionGeneratorService sequenceVersionGeneratorService;
 
-  private final SequenceRepository sequenceRepo;
+  protected final AppBaseService appBaseService;
 
-  protected ExecutorService executor = Executors.newSingleThreadExecutor();
+  protected final SequenceRepository sequenceRepo;
+
+  protected final SequenceReservationService sequenceReservationService;
+
+  protected final SequenceComputationService sequenceComputationService;
 
   @Inject
   public SequenceService(
       SequenceVersionRepository sequenceVersionRepository,
       AppBaseService appBaseService,
-      SequenceRepository sequenceRepo) {
+      SequenceRepository sequenceRepo,
+      SequenceVersionGeneratorService sequenceVersionGeneratorService,
+      SequenceReservationService sequenceReservationService,
+      SequenceComputationService sequenceComputationService) {
 
     this.sequenceVersionRepository = sequenceVersionRepository;
     this.appBaseService = appBaseService;
     this.sequenceRepo = sequenceRepo;
-  }
-
-  public static boolean isYearValid(Sequence sequence) {
-
-    boolean yearlyResetOk = sequence.getYearlyResetOk();
-
-    if (!yearlyResetOk) {
-      return true;
-    }
-
-    String seqPrefixe = StringUtils.defaultString(sequence.getPrefixe(), ""),
-        seqSuffixe = StringUtils.defaultString(sequence.getSuffixe(), ""),
-        seq = seqPrefixe + seqSuffixe;
-
-    return seq.contains(PATTERN_YEAR) || seq.contains(PATTERN_FULL_YEAR);
-  }
-
-  public static boolean isMonthValid(Sequence sequence) {
-
-    boolean monthlyResetOk = sequence.getMonthlyResetOk();
-
-    if (!monthlyResetOk) {
-      return true;
-    }
-
-    String seqPrefixe = StringUtils.defaultString(sequence.getPrefixe(), ""),
-        seqSuffixe = StringUtils.defaultString(sequence.getSuffixe(), ""),
-        seq = seqPrefixe + seqSuffixe;
-
-    return (seq.contains(PATTERN_MONTH) || seq.contains(PATTERN_FULL_MONTH))
-        && (seq.contains(PATTERN_YEAR) || seq.contains(PATTERN_FULL_YEAR));
-  }
-
-  public static boolean isSequenceLengthValid(Sequence sequence) {
-    String seqPrefixe = StringUtils.defaultString(sequence.getPrefixe(), "").replaceAll("%", "");
-    String seqSuffixe = StringUtils.defaultString(sequence.getSuffixe(), "").replaceAll("%", "");
-
-    return (seqPrefixe.length() + seqSuffixe.length() + sequence.getPadding()) <= 14;
+    this.sequenceVersionGeneratorService = sequenceVersionGeneratorService;
+    this.sequenceReservationService = sequenceReservationService;
+    this.sequenceComputationService = sequenceComputationService;
   }
 
   /**
-   * Retourne une sequence en fonction du code, de la sté
+   * Checks if the generated sequence length is within the allowed limit.
    *
-   * @return
+   * @param sequence
+   * @throws AxelorException
+   */
+  public void checkSequenceLengthValidity(Sequence sequence) throws AxelorException {
+    Company company = sequence.getCompany();
+    String nextSeq = computeTestSeq(sequence, appBaseService.getTodayDate(company));
+
+    if (nextSeq.length() > SEQ_MAX_LENGTH) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_INCONSISTENCY,
+          I18n.get(BaseExceptionMessage.SEQUENCE_LENGTH_NOT_VALID));
+    }
+  }
+
+  /**
+   * Retrieves a sequence by its code and associated company.
+   *
+   * @param code
+   * @param company
+   * @return {@link Sequence} or null if not found.
    */
   public Sequence getSequence(String code, Company company) {
 
@@ -145,97 +135,34 @@ public class SequenceService {
   }
 
   /**
-   * Retourne une sequence en fonction du code, de la sté
+   * Checks if a sequence exists for the given code and company.
    *
-   * @return
-   */
-  public String getSequenceNumber(String code) {
-
-    return this.getSequenceNumber(code, null);
-  }
-
-  /**
-   * Retourne une sequence en fonction du code, de la sté
-   *
-   * @return
-   */
-  public String getSequenceNumber(String code, Company company) {
-
-    Sequence sequence = getSequence(code, company);
-
-    if (sequence == null) {
-      return null;
-    }
-
-    return this.getSequenceNumber(sequence, appBaseService.getTodayDate(company));
-  }
-
-  /**
-   * Retourne une sequence en fonction du code, de la sté
-   *
-   * @return
+   * @param code
+   * @param company
+   * @return {@code true} if a sequence exists, {@code false} otherwise.
    */
   public boolean hasSequence(String code, Company company) {
 
     return getSequence(code, company) != null;
   }
 
-  public String getSequenceNumber(Sequence sequence) {
-    return getSequenceNumber(sequence, appBaseService.getTodayDate(sequence.getCompany()));
-  }
+  protected String computeNextSeq(
+      SequenceVersion sequenceVersion, Sequence sequence, LocalDate refDate)
+      throws AxelorException {
 
-  /**
-   * Method returning a sequence number from a given generic sequence and a date
-   *
-   * @param sequence
-   * @param refDate
-   * @return
-   */
-  public String getSequenceNumber(Sequence sequence, LocalDate refDate) {
+    String seqPrefixe = Objects.toString(sequence.getPrefixe(), "");
+    String seqSuffixe = Objects.toString(sequence.getSuffixe(), "");
 
-    try {
-      Future<String> newSeq = executor.submit(() -> getSequenceNumberInExecutor(sequence, refDate));
-      return newSeq.get();
-    } catch (Exception e) {
-      TraceBackService.trace(e);
-      throw new RuntimeException(e);
-    }
-  }
+    String sequenceValue = getSequenceValue(sequenceVersion);
 
-  @Transactional(rollbackOn = {Exception.class})
-  protected String getSequenceNumberInExecutor(Sequence sequence, LocalDate refDate) {
-    Sequence seq = sequenceRepo.find(sequence.getId());
-    SequenceVersion sequenceVersion = getVersion(seq, refDate);
-    String nextSeq = computeNextSeq(sequenceVersion, seq, refDate);
-    sequenceVersion.setNextNum(sequenceVersion.getNextNum() + seq.getToBeAdded());
-    if (sequenceVersion.getId() == null) {
-      sequenceVersionRepository.save(sequenceVersion);
-    }
-    return nextSeq;
-  }
-
-  private String computeNextSeq(
-      SequenceVersion sequenceVersion, Sequence sequence, LocalDate refDate) {
-
-    String seqPrefixe = StringUtils.defaultString(sequence.getPrefixe(), ""),
-        seqSuffixe = StringUtils.defaultString(sequence.getSuffixe(), ""),
-        sequenceValue;
-
-    if (sequence.getSequenceTypeSelect() == SequenceTypeSelect.NUMBERS) {
-      sequenceValue =
-          StringUtils.leftPad(
-              sequenceVersion.getNextNum().toString(), sequence.getPadding(), PADDING_STRING);
-    } else {
-      sequenceValue = findNextLetterSequence(sequenceVersion);
-    }
     String nextSeq =
         (seqPrefixe + sequenceValue + seqSuffixe)
-            .replaceAll(PATTERN_FULL_YEAR, Integer.toString(refDate.get(ChronoField.YEAR_OF_ERA)))
-            .replaceAll(PATTERN_YEAR, refDate.format(DateTimeFormatter.ofPattern("yy")))
-            .replaceAll(PATTERN_MONTH, Integer.toString(refDate.getMonthValue()))
-            .replaceAll(PATTERN_FULL_MONTH, refDate.format(DateTimeFormatter.ofPattern("MM")))
-            .replaceAll(PATTERN_DAY, Integer.toString(refDate.getDayOfMonth()))
-            .replaceAll(
+            .replace(PATTERN_FULL_YEAR, Integer.toString(refDate.get(ChronoField.YEAR_OF_ERA)))
+            .replace(PATTERN_YEAR, refDate.format(DateTimeFormatter.ofPattern("yy")))
+            .replace(PATTERN_MONTH, Integer.toString(refDate.getMonthValue()))
+            .replace(PATTERN_FULL_MONTH, refDate.format(DateTimeFormatter.ofPattern("MM")))
+            .replace(PATTERN_DAY, Integer.toString(refDate.getDayOfMonth()))
+            .replace(
                 PATTERN_WEEK, Integer.toString(refDate.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)));
 
     log.debug("nextSeq : : : : {}", nextSeq);
@@ -243,76 +170,80 @@ public class SequenceService {
     return nextSeq;
   }
 
-  private String findNextLetterSequence(SequenceVersion sequenceVersion) {
-    long n = sequenceVersion.getNextNum();
-    char[] buf = new char[(int) Math.floor(Math.log(25 * (n + 1)) / Math.log(26))];
-    for (int i = buf.length - 1; i >= 0; i--) {
-      n--;
-      buf[i] = (char) ('A' + n % 26);
-      n /= 26;
-    }
-    if (sequenceVersion.getSequence().getSequenceLettersTypeSelect()
-        == SequenceLettersTypeSelect.UPPERCASE) {
-      return new String(buf);
-    }
-    return new String(buf).toLowerCase();
+  protected String getSequenceValue(SequenceVersion sequenceVersion) throws AxelorException {
+    Sequence sequence = sequenceVersion.getSequence();
+    Long nextNum = sequenceVersion.getNextNum();
+
+    return sequenceComputationService.getSequenceValue(sequence, nextNum);
   }
 
+  protected String findNextAlphanumericSequence(Long nextNum, String pattern) {
+    return sequenceComputationService.findNextAlphanumericSequence(nextNum, pattern);
+  }
+
+  /**
+   * Computes a test sequence by computing the next seq without any save. Used for checking validity
+   * purpose.
+   *
+   * @param sequence
+   * @param refDate
+   * @return the test sequence
+   * @throws AxelorException
+   */
+  public String computeTestSeq(Sequence sequence, LocalDate refDate) throws AxelorException {
+    SequenceVersion sequenceVersion = getVersion(sequence, refDate);
+    return computeNextSeq(sequenceVersion, sequence, refDate);
+  }
+
+  protected String findNextLetterSequence(long nextNum, SequenceLettersTypeSelect lettersType)
+      throws AxelorException {
+
+    String result;
+    if (nextNum <= 0) {
+      throw new IllegalArgumentException("Input should be a strictly positive long.");
+    } else if (nextNum == 1) {
+      result = "A";
+    } else {
+      result = convertNextSeqLongToString(nextNum);
+    }
+
+    return applyCase(result, lettersType);
+  }
+
+  protected String applyCase(String result, SequenceLettersTypeSelect lettersType)
+      throws AxelorException {
+    return sequenceComputationService.applyCase(result, lettersType);
+  }
+
+  protected String convertNextSeqLongToString(long nextNum) {
+    return sequenceComputationService.convertNextSeqLongToString(nextNum);
+  }
+
+  /**
+   * Get or creates a sequence version for the given sequence and reference date.
+   *
+   * @param sequence
+   * @param refDate
+   * @return {@link SequenceVersion}.
+   */
   public SequenceVersion getVersion(Sequence sequence, LocalDate refDate) {
 
     log.debug("Reference date : : : : {}", refDate);
 
-    if (sequence.getMonthlyResetOk()) {
-      return getVersionByMonth(sequence, refDate);
-    }
-    if (sequence.getYearlyResetOk()) {
-      return getVersionByYear(sequence, refDate);
-    }
-    return getVersionByDate(sequence, refDate);
-  }
-
-  protected SequenceVersion getVersionByDate(Sequence sequence, LocalDate refDate) {
-
     SequenceVersion sequenceVersion = sequenceVersionRepository.findByDate(sequence, refDate);
     if (sequenceVersion == null) {
-      sequenceVersion = new SequenceVersion(sequence, refDate, null, 1L);
+      sequenceVersion = sequenceVersionGeneratorService.createNewSequenceVersion(sequence, refDate);
     }
 
     return sequenceVersion;
   }
 
-  protected SequenceVersion getVersionByMonth(Sequence sequence, LocalDate refDate) {
-
-    SequenceVersion sequenceVersion =
-        sequenceVersionRepository.findByMonth(sequence, refDate.getMonthValue(), refDate.getYear());
-    if (sequenceVersion == null) {
-      sequenceVersion =
-          new SequenceVersion(
-              sequence,
-              refDate.withDayOfMonth(1),
-              refDate.withDayOfMonth(refDate.lengthOfMonth()),
-              1L);
-    }
-
-    return sequenceVersion;
-  }
-
-  protected SequenceVersion getVersionByYear(Sequence sequence, LocalDate refDate) {
-
-    SequenceVersion sequenceVersion =
-        sequenceVersionRepository.findByYear(sequence, refDate.getYear());
-    if (sequenceVersion == null) {
-      sequenceVersion =
-          new SequenceVersion(
-              sequence,
-              refDate.withDayOfMonth(1),
-              refDate.withDayOfMonth(refDate.lengthOfMonth()),
-              1L);
-    }
-
-    return sequenceVersion;
-  }
-
+  /**
+   * Get the default title for a sequence based on its code.
+   *
+   * @param sequence
+   * @return default title
+   */
   public String getDefaultTitle(Sequence sequence) {
     MetaSelectItem item =
         Beans.get(MetaSelectItemRepository.class)
@@ -327,6 +258,15 @@ public class SequenceService {
   }
 
   /**
+   * Get draft sequence number prefix.
+   *
+   * @return
+   */
+  protected String getDraftPrefix() {
+    return Optional.ofNullable(appBaseService.getAppBase().getDraftPrefix()).orElse(DRAFT_PREFIX);
+  }
+
+  /**
    * Get draft sequence number.
    *
    * @param model
@@ -338,9 +278,10 @@ public class SequenceService {
       throw new AxelorException(
           model,
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.SEQUENCE_NOT_SAVED_RECORD));
+          I18n.get(BaseExceptionMessage.SEQUENCE_NOT_SAVED_RECORD));
     }
-    return String.format("%s%d", DRAFT_PREFIX, model.getId());
+    String draftPrefix = getDraftPrefix();
+    return String.format("%s%d", draftPrefix, model.getId());
   }
 
   /**
@@ -350,16 +291,17 @@ public class SequenceService {
    * @param padding
    * @return
    */
-  public String getDraftSequenceNumber(Model model, int zeroPadding) throws AxelorException {
+  public String getDraftSequenceNumber(Model model, int padding) throws AxelorException {
     if (model.getId() == null) {
       throw new AxelorException(
           model,
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.SEQUENCE_NOT_SAVED_RECORD));
+          I18n.get(BaseExceptionMessage.SEQUENCE_NOT_SAVED_RECORD));
     }
+    String draftPrefix = getDraftPrefix();
     return String.format(
         "%s%s",
-        DRAFT_PREFIX, StringTool.fillStringLeft(String.valueOf(model.getId()), '0', zeroPadding));
+        draftPrefix, StringHelper.fillStringLeft(String.valueOf(model.getId()), '0', padding));
   }
 
   /**
@@ -372,7 +314,7 @@ public class SequenceService {
    */
   public boolean isEmptyOrDraftSequenceNumber(String sequenceNumber) {
     return Strings.isNullOrEmpty(sequenceNumber)
-        || sequenceNumber.matches(String.format("[\\%s\\*]\\d+", DRAFT_PREFIX));
+        || sequenceNumber.matches(String.format("[\\%s\\*]\\d+", getDraftPrefix()));
   }
 
   /**
@@ -387,9 +329,7 @@ public class SequenceService {
       fn.append(sequence.getPrefixe());
     }
 
-    for (int i = 0; i < sequence.getPadding(); i++) {
-      fn.append("X");
-    }
+    fn.append("X".repeat(Math.max(0, sequence.getPadding())));
 
     if (sequence.getSuffixe() != null) {
       fn.append(sequence.getSuffixe());
@@ -402,13 +342,155 @@ public class SequenceService {
   }
 
   /**
-   * This method calls shutdown on the executor when the application stops.
+   * Updates sequence versions by setting the end date for the active version.
    *
-   * @param event shutdown event
+   * @param sequence
+   * @param todayDate
+   * @param endOfDate
+   * @return The updated list of sequence versions.
    */
-  protected void onApplicationShutdown(@Observes ShutdownEvent event) {
-    log.debug("Shutting down sequence executor..");
-    executor.shutdown();
-    log.debug("Sequence executor stopped.");
+  public List<SequenceVersion> updateSequenceVersions(
+      Sequence sequence, LocalDate todayDate, LocalDate endOfDate) {
+
+    List<SequenceVersion> sequenceVersionList = sequence.getSequenceVersionList();
+    if (ObjectUtils.isEmpty(sequenceVersionList)) {
+      return sequenceVersionList;
+    }
+    sequenceVersionList.stream()
+        .filter(
+            version ->
+                !version.getStartDate().isAfter(todayDate)
+                    && (version.getEndDate() == null || !version.getEndDate().isBefore(todayDate)))
+        .max(Comparator.comparing(SequenceVersion::getStartDate))
+        .ifPresent(sequenceVersion -> sequenceVersion.setEndDate(endOfDate));
+
+    return sequenceVersionList;
+  }
+
+  /**
+   * Validates that the sequence prefix does not start with the draft prefix.
+   *
+   * @param sequence
+   * @throws AxelorException
+   */
+  public void validateSequence(Sequence sequence) throws AxelorException {
+    String draftPrefix = getDraftPrefix();
+
+    if (sequence.getPrefixe() != null && sequence.getPrefixe().startsWith(draftPrefix))
+      throw new AxelorException(
+          sequence,
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          BaseExceptionMessage.SEQUENCE_PREFIX,
+          draftPrefix);
+  }
+
+  /**
+   * Generates a sequence number for a given sequence, entity, and field.
+   *
+   * @param sequence
+   * @param objectClass
+   * @param fieldName
+   * @param model
+   * @return The generated sequence number.
+   * @throws AxelorException If the sequence is invalid or the number already exists.
+   */
+  public String getSequenceNumber(
+      Sequence sequence, Class<? extends Model> objectClass, String fieldName, Model model)
+      throws AxelorException {
+    return this.getSequenceNumber(
+        sequence,
+        appBaseService.getTodayDate(sequence.getCompany()),
+        objectClass,
+        fieldName,
+        model);
+  }
+
+  /**
+   * Verifies that the sequence pattern length matches the padding.
+   *
+   * @param sequence
+   * @throws AxelorException If the pattern length does not match the padding.
+   */
+  public void verifyPattern(Sequence sequence) throws AxelorException {
+    if (sequence.getPattern() != null && sequence.getPadding() != sequence.getPattern().length()) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(BaseExceptionMessage.SEQUENCE_PATTERN_LENGTH_NOT_VALID));
+    }
+  }
+
+  /**
+   * Retrieves a sequence number by code, entity, and field.
+   *
+   * @param code
+   * @param objectClass
+   * @param fieldName
+   * @param model
+   * @return The generated sequence number, or null if sequence doesn't exists.
+   * @throws AxelorException If the sequence is invalid or the number already exists.
+   */
+  public String getSequenceNumber(
+      String code, Class<? extends Model> objectClass, String fieldName, Model model)
+      throws AxelorException {
+
+    return this.getSequenceNumber(code, null, objectClass, fieldName, model);
+  }
+
+  /**
+   * Retrieves a sequence number by code, company, entity, and field.
+   *
+   * @param code
+   * @param objectClass
+   * @param fieldName
+   * @param model
+   * @return The generated sequence number, or null if sequence doesn't exists.
+   * @throws AxelorException If the sequence is invalid or the number already exists.
+   */
+  public String getSequenceNumber(
+      String code,
+      Company company,
+      Class<? extends Model> objectClass,
+      String fieldName,
+      Model model)
+      throws AxelorException {
+
+    Sequence sequence = getSequence(code, company);
+
+    if (sequence == null) {
+      return null;
+    }
+
+    return this.getSequenceNumber(
+        sequence, appBaseService.getTodayDate(company), objectClass, fieldName, model);
+  }
+
+  /**
+   * Generates a sequence number for a given sequence, date, entity, and field.
+   *
+   * <p>This method delegates to {@link SequenceReservationService} which handles:
+   *
+   * <ul>
+   *   <li>Isolated transaction for sequence increment (no long-lived locks)
+   *   <li>Transaction-aware reservation lifecycle (confirm on commit, release on rollback)
+   *   <li>Reuse of released sequence numbers to minimize gaps
+   * </ul>
+   *
+   * @param sequence the sequence configuration
+   * @param refDate the reference date for version selection and patterns
+   * @param objectClass the entity class for duplicate checking (can be null)
+   * @param fieldName the field name for duplicate checking (can be null)
+   * @param model the model instance for Groovy evaluation (can be null)
+   * @return the generated sequence number
+   * @throws AxelorException if sequence generation fails
+   */
+  public String getSequenceNumber(
+      Sequence sequence,
+      LocalDate refDate,
+      Class<? extends Model> objectClass,
+      String fieldName,
+      Model model)
+      throws AxelorException {
+    return sequenceReservationService.reserveSequenceNumber(
+        sequence, refDate, objectClass, fieldName, model);
   }
 }

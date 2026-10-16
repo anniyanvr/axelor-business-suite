@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,14 +14,15 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.sale.service;
 
 import static com.axelor.apps.base.service.administration.AbstractBatch.FETCH_LIMIT;
-import static com.axelor.apps.tool.date.DateTool.toDate;
-import static com.axelor.apps.tool.date.DateTool.toLocalDateT;
+import static com.axelor.utils.helpers.date.LocalDateHelper.toDate;
+import static com.axelor.utils.helpers.date.LocalDateTimeHelper.toLocalDateT;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.ABCAnalysis;
 import com.axelor.apps.base.db.ABCAnalysisLine;
 import com.axelor.apps.base.db.Product;
@@ -36,8 +38,7 @@ import com.axelor.apps.sale.db.repo.SaleOrderLineRepository;
 import com.axelor.apps.sale.db.repo.SaleOrderRepository;
 import com.axelor.db.JPA;
 import com.axelor.db.Query;
-import com.axelor.exception.AxelorException;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -108,11 +109,11 @@ public class ABCAnalysisServiceSaleImpl extends ABCAnalysisServiceImpl {
         productWorth = productWorth.add(saleOrderLine.getCompanyExTaxTotal());
       }
 
-      super.incTotalQty(productQty);
-      super.incTotalWorth(productWorth);
-
       JPA.clear();
     }
+
+    super.incTotalQty(productQty);
+    super.incTotalWorth(productWorth);
 
     if (abcAnalysisLine != null) {
       setQtyWorth(

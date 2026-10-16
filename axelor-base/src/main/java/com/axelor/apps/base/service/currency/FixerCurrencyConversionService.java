@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,43 +14,44 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.currency;
 
-import com.axelor.apps.base.db.AppBase;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Currency;
 import com.axelor.apps.base.db.CurrencyConversionLine;
 import com.axelor.apps.base.db.repo.CurrencyConversionLineRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.app.AppBaseService;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.common.StringUtils;
 import com.axelor.i18n.I18n;
-import com.google.inject.Inject;
+import com.axelor.studio.db.AppBase;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.inject.Inject;
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.MalformedURLException;
-import java.net.URL;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.Period;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import wslite.http.HTTPClient;
-import wslite.http.HTTPMethod;
-import wslite.http.HTTPRequest;
-import wslite.http.HTTPResponse;
-import wslite.json.JSONException;
-import wslite.json.JSONObject;
 
 public class FixerCurrencyConversionService extends CurrencyConversionService {
   private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -69,16 +71,16 @@ public class FixerCurrencyConversionService extends CurrencyConversionService {
   public void updateCurrencyConverion() throws AxelorException {
     AppBase appBase = appBaseService.getAppBase();
     try {
-      HTTPResponse response = null;
+      HttpResponse<String> response = null;
       LocalDate today =
           appBaseService.getTodayDate(
               Optional.ofNullable(AuthUtils.getUser()).map(User::getActiveCompany).orElse(null));
 
       response = callApiBaseEuru(null, null, today);
-      if (response.getStatusCode() != 200) {
+      if (response.statusCode() != 200) {
         throw new AxelorException(
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.CURRENCY_6));
+            I18n.get(BaseExceptionMessage.CURRENCY_6));
       }
 
       List<CurrencyConversionLine> currencyConversionLines =
@@ -92,31 +94,33 @@ public class FixerCurrencyConversionService extends CurrencyConversionService {
         BigDecimal currentRate = BigDecimal.ZERO;
         Float rate = 0.0f;
 
-        if (!ccline.getStartCurrency().getCode().equals(EURO_CURRENCY_CODE)
-            && !ccline.getEndCurrency().getCode().equals(EURO_CURRENCY_CODE)) {
+        if (!ccline.getStartCurrency().getCodeISO().equals(EURO_CURRENCY_CODE)
+            && !ccline.getEndCurrency().getCodeISO().equals(EURO_CURRENCY_CODE)) {
 
           isRelatedConversion = true;
           rate = this.getRateFromJson(ccline.getStartCurrency(), ccline.getEndCurrency(), response);
-        } else if (ccline.getStartCurrency().getCode().equals(EURO_CURRENCY_CODE)) {
+        } else if (ccline.getStartCurrency().getCodeISO().equals(EURO_CURRENCY_CODE)) {
           rate = this.getRateFromJson(ccline.getStartCurrency(), ccline.getEndCurrency(), response);
         } else {
           rate = this.getRateFromJson(ccline.getEndCurrency(), ccline.getStartCurrency(), response);
           rate = 1.0f / rate;
         }
 
-        currentRate = BigDecimal.valueOf(rate).setScale(8, RoundingMode.HALF_UP);
+        currentRate =
+            BigDecimal.valueOf(rate)
+                .setScale(AppBaseService.DEFAULT_EXCHANGE_RATE_SCALE, RoundingMode.HALF_UP);
 
         if (currentRate.compareTo(new BigDecimal(-1)) == 0) {
           throw new AxelorException(
               TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-              I18n.get(IExceptionMessage.CURRENCY_6));
+              I18n.get(BaseExceptionMessage.CURRENCY_6));
         }
 
         ccline = cclRepo.find(ccline.getId());
         BigDecimal previousRate = ccline.getExchangeRate();
-        if (currentRate.compareTo(previousRate) != 0) {
+        if (currentRate.compareTo(previousRate) != 0 && today.isAfter(ccline.getFromDate())) {
           ccline.setToDate(
-              today.minusDays(1).isAfter(ccline.getFromDate()) ? today.minusDays(1) : today);
+              !today.minusDays(1).isBefore(ccline.getFromDate()) ? today.minusDays(1) : today);
           this.saveCurrencyConversionLine(ccline);
           String variations = this.getVariations(currentRate, previousRate);
           this.createCurrencyConversionLine(
@@ -137,8 +141,18 @@ public class FixerCurrencyConversionService extends CurrencyConversionService {
 
   @Override
   public BigDecimal convert(Currency currencyFrom, Currency currencyTo)
-      throws MalformedURLException, JSONException, AxelorException {
+      throws MalformedURLException, AxelorException {
+    return this.getRateWithDate(currencyFrom, currencyTo).getRight();
+  }
+
+  @Override
+  public Pair<LocalDate, BigDecimal> getRateWithDate(Currency currencyFrom, Currency currencyTo)
+      throws MalformedURLException, AxelorException {
     BigDecimal rate = new BigDecimal(-1);
+
+    LocalDate todayDate =
+        appBaseService.getTodayDate(
+            Optional.ofNullable(AuthUtils.getUser()).map(User::getActiveCompany).orElse(null));
 
     LOG.trace("Currerncy conversion From: {} To: {}", currencyFrom, currencyTo);
     LocalDate date =
@@ -148,86 +162,116 @@ public class FixerCurrencyConversionService extends CurrencyConversionService {
     if (currencyFrom != null && currencyTo != null) {
 
       if (!isFixerApiPaid
-          && !currencyFrom.getCode().equals(EURO_CURRENCY_CODE)
-          && !currencyTo.getCode().equals(EURO_CURRENCY_CODE)) {
+          && !currencyFrom.getCodeISO().equals(EURO_CURRENCY_CODE)
+          && !currencyTo.getCodeISO().equals(EURO_CURRENCY_CODE)) {
         isRelatedConversion = true;
       }
 
-      Float rt = this.validateAndGetRate(1, currencyFrom, currencyTo, date);
+      Pair<LocalDate, Float> pair =
+          this.validateAndGetRateWithDate(1, currencyFrom, currencyTo, todayDate);
+      Float rt = pair.getRight();
       if (rt == null) {
         rt = 1.0f / this.validateAndGetRate(1, currencyTo, currencyFrom, date); // reverse
       }
-      rate = BigDecimal.valueOf(rt).setScale(8, RoundingMode.HALF_UP);
+      rate =
+          BigDecimal.valueOf(rt)
+              .setScale(AppBaseService.DEFAULT_EXCHANGE_RATE_SCALE, RoundingMode.HALF_UP);
+      LOG.trace("Currerncy conversion rate: {}", rate);
+      return Pair.of(pair.getLeft(), rate);
     } else LOG.trace("Currency from and to must be filled to get rate");
-    LOG.trace("Currerncy conversion rate: {}", rate);
-    return rate;
+    return Pair.of(todayDate, rate);
   }
 
   @Override
   public Float validateAndGetRate(
       int dayCount, Currency currencyFrom, Currency currencyTo, LocalDate date)
       throws AxelorException {
-    try {
-      HTTPResponse response = null;
+    return this.validateAndGetRateWithDate(dayCount, currencyFrom, currencyTo, date).getRight();
+  }
 
-      if (dayCount < 8) {
+  @Override
+  public Pair<LocalDate, Float> validateAndGetRateWithDate(
+      int dayCount, Currency currencyFrom, Currency currencyTo, LocalDate date)
+      throws AxelorException {
+    HttpResponse<String> response = null;
+
+    if (dayCount < 8) {
+      try {
         response = callApiBaseEuru(currencyFrom, currencyTo, date);
-        LOG.trace(
-            "Webservice response code: {}, response message: {}",
-            response.getStatusCode(),
-            response.getStatusMessage());
-        if (response.getStatusCode() != 200) return -1f;
+        LOG.trace("Webservice response code: {}, response message: {}", response.statusCode() /*,
+            response.getStatusMessage()*/);
+        if (response.statusCode() != 200) return Pair.of(date, -1f);
 
-        if (response.getContentAsString().isEmpty()) {
-          return this.validateAndGetRate(
+        if (response.body().isEmpty()) {
+          return this.validateAndGetRateWithDate(
               (dayCount + 1), currencyFrom, currencyTo, date.minus(Period.ofDays(1)));
         } else {
-          return this.getRateFromJson(currencyFrom, currencyTo, response);
+          Float rate = this.getRateFromJson(currencyFrom, currencyTo, response);
+          return Pair.of(date, rate);
         }
-      } else {
+      } catch (Exception e) {
         throw new AxelorException(
-            TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            String.format(
-                I18n.get(IExceptionMessage.CURRENCY_7),
-                date.plus(Period.ofDays(1)),
-                appBaseService.getTodayDate(
-                    Optional.ofNullable(AuthUtils.getUser())
-                        .map(User::getActiveCompany)
-                        .orElse(null))));
+            e.getCause(), TraceBackRepository.CATEGORY_INCONSISTENCY, e.getLocalizedMessage());
       }
-    } catch (Exception e) {
+    } else {
       throw new AxelorException(
-          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR, I18n.get(IExceptionMessage.CURRENCY_6));
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(BaseExceptionMessage.CURRENCY_7),
+          currencyFrom.getName(),
+          currencyTo.getName());
     }
   }
 
   @Override
-  public Float getRateFromJson(Currency currencyFrom, Currency currencyTo, HTTPResponse response)
+  public Float getRateFromJson(
+      Currency currencyFrom, Currency currencyTo, HttpResponse<String> response)
       throws AxelorException {
-    try {
-      JSONObject jsonResult = new JSONObject(response.getContentAsString());
+    String jsonString = response.body();
+    ObjectMapper objectMapper = new ObjectMapper();
 
-      if (jsonResult.containsKey("rates")) {
+    try {
+      JsonNode jsonResult = objectMapper.readTree(jsonString);
+
+      if (jsonResult.has("rates")) {
+        JsonNode ratesNode = jsonResult.get("rates");
 
         if (isRelatedConversion) {
-          String fromRate = jsonResult.getJSONObject("rates").optString(currencyFrom.getCode());
-          String toRate = jsonResult.getJSONObject("rates").optString(currencyTo.getCode());
+          String fromRate = ratesNode.path(currencyFrom.getCodeISO()).asText(null);
+          String toRate = ratesNode.path(currencyTo.getCodeISO()).asText(null);
+
+          if (StringUtils.isEmpty(toRate)) {
+            throw new AxelorException(
+                TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+                I18n.get(BaseExceptionMessage.CURRENCY_7),
+                currencyFrom.getName(),
+                currencyTo.getName());
+          }
           isRelatedConversion = false;
           return Float.parseFloat(toRate) / Float.parseFloat(fromRate);
         } else {
-          String rate = jsonResult.getJSONObject("rates").optString(currencyTo.getCode());
-          return Float.parseFloat((rate));
+          String rate = ratesNode.path(currencyTo.getCodeISO()).asText();
+          return Float.parseFloat(rate);
         }
-      } else if (jsonResult.containsKey("error")
-          && currencyTo.getCode().equals(EURO_CURRENCY_CODE)) {
-        int code = jsonResult.getJSONObject("error").getInt("code");
+      } else if (jsonResult.has("error") && currencyTo.getCodeISO().equals(EURO_CURRENCY_CODE)) {
+        JsonNode errorNode = jsonResult.get("error");
+        int code = errorNode.path("code").asInt();
         if (code == 105 || code == 201) {
           return null;
         }
+      } else if (jsonResult.has("error") && jsonResult.get("error").path("code").asInt() == 202) {
+        throw new AxelorException(
+            TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+            I18n.get(BaseExceptionMessage.CURRENCY_7),
+            currencyFrom.getName(),
+            currencyTo.getName());
+      } else if (jsonResult.has("error")) {
+        throw new AxelorException(
+            TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+            jsonResult.get("error").path("info").asText());
       }
-      throw new AxelorException(
-          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR, response.getContentAsString());
-    } catch (JSONException | NumberFormatException e) {
+      throw new AxelorException(TraceBackRepository.CATEGORY_CONFIGURATION_ERROR, jsonString);
+
+    } catch (Exception e) {
       throw new AxelorException(
           e.getCause(), TraceBackRepository.CATEGORY_INCONSISTENCY, e.getLocalizedMessage());
     }
@@ -252,29 +296,32 @@ public class FixerCurrencyConversionService extends CurrencyConversionService {
     return url;
   }
 
-  private HTTPResponse callApiBaseEuru(Currency currencyFrom, Currency currencyTo, LocalDate date)
-      throws MalformedURLException {
-    HTTPClient httpclient = new HTTPClient();
-    HTTPRequest request = new HTTPRequest();
-    URL url = null;
-    Map<String, Object> headers = new HashMap<>();
-    headers.put("Accept", "application/json");
-    request.setHeaders(headers);
+  protected HttpResponse<String> callApiBaseEuru(
+      Currency currencyFrom, Currency currencyTo, LocalDate date)
+      throws IOException, InterruptedException {
+
+    String url;
     if (currencyFrom != null && currencyTo != null) {
       if (isRelatedConversion) {
         url =
-            new URL(
-                this.getUrlString(
-                    date, EURO_CURRENCY_CODE, currencyFrom.getCode(), currencyTo.getCode()));
+            this.getUrlString(
+                date, EURO_CURRENCY_CODE, currencyFrom.getCodeISO(), currencyTo.getCodeISO());
       } else {
-        url = new URL(this.getUrlString(date, currencyFrom.getCode(), currencyTo.getCode()));
+        url = this.getUrlString(date, currencyFrom.getCodeISO(), currencyTo.getCodeISO());
       }
     } else {
-      url = new URL(this.getUrlString(date, EURO_CURRENCY_CODE));
+      url = this.getUrlString(date, EURO_CURRENCY_CODE);
     }
     LOG.trace("Currency conversion webservice URL: {}", new Object[] {url.toString()});
-    request.setUrl(url);
-    request.setMethod(HTTPMethod.GET);
-    return httpclient.execute(request);
+    HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(5000)).build();
+
+    HttpRequest request =
+        HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "application/json")
+            .GET()
+            .build();
+
+    return client.send(request, HttpResponse.BodyHandlers.ofString());
   }
 }

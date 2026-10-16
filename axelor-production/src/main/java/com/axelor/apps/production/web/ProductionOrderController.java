@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,10 +14,11 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.production.web;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.repo.ProductRepository;
 import com.axelor.apps.base.service.app.AppBaseService;
@@ -24,21 +26,21 @@ import com.axelor.apps.production.db.BillOfMaterial;
 import com.axelor.apps.production.db.ProductionOrder;
 import com.axelor.apps.production.db.repo.BillOfMaterialRepository;
 import com.axelor.apps.production.db.repo.ProductionOrderRepository;
-import com.axelor.apps.production.exceptions.IExceptionMessage;
-import com.axelor.apps.production.service.manuforder.ManufOrderService;
-import com.axelor.apps.production.service.productionorder.ProductionOrderService;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.production.exceptions.ProductionExceptionMessage;
+import com.axelor.apps.production.service.manuforder.ManufOrderService.ManufOrderOriginTypeProduction;
+import com.axelor.apps.production.service.productionorder.ProductionOrderSaleOrderMOGenerationService;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
 import com.axelor.rpc.Context;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 import java.math.BigDecimal;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import java.util.Optional;
 
 @Singleton
 public class ProductionOrderController {
@@ -50,9 +52,9 @@ public class ProductionOrderController {
 
     if (context.get("qty") == null
         || new BigDecimal(context.get("qty").toString()).compareTo(BigDecimal.ZERO) <= 0) {
-      response.setFlash(I18n.get(IExceptionMessage.PRODUCTION_ORDER_3) + "!");
+      response.setInfo(I18n.get(ProductionExceptionMessage.PRODUCTION_ORDER_3) + "!");
     } else if (context.get("billOfMaterial") == null) {
-      response.setFlash(I18n.get(IExceptionMessage.PRODUCTION_ORDER_4) + "!");
+      response.setInfo(I18n.get(ProductionExceptionMessage.PRODUCTION_ORDER_4) + "!");
     } else {
       Map<String, Object> bomContext = (Map<String, Object>) context.get("billOfMaterial");
       BillOfMaterial billOfMaterial =
@@ -82,23 +84,32 @@ public class ProductionOrderController {
         startDateT = Beans.get(AppBaseService.class).getTodayDateTime();
       }
 
+      ZonedDateTime endDateT = null;
+      if (context.containsKey("_endDate") && context.get("_endDate") != null) {
+        endDateT =
+            ZonedDateTime.parse(
+                (CharSequence) context.get("_endDate"),
+                DateTimeFormatter.ISO_INSTANT.withZone(ZoneId.systemDefault()));
+      }
+
       ProductionOrder productionOrder =
           Beans.get(ProductionOrderRepository.class)
               .find(Long.parseLong(request.getContext().get("_id").toString()));
 
       if (billOfMaterial.getProdProcess() != null) {
-        Beans.get(ProductionOrderService.class)
+        Beans.get(ProductionOrderSaleOrderMOGenerationService.class)
             .addManufOrder(
                 productionOrder,
                 product,
                 billOfMaterial,
                 qty,
                 startDateT.toLocalDateTime(),
-                null,
+                Optional.ofNullable(endDateT).map(ZonedDateTime::toLocalDateTime).orElse(null),
                 productionOrder.getSaleOrder(),
-                ManufOrderService.ORIGIN_TYPE_OTHER);
+                null,
+                ManufOrderOriginTypeProduction.ORIGIN_TYPE_OTHER);
       } else {
-        response.setError(I18n.get(IExceptionMessage.MANUF_ORDER_NO_GENERATION));
+        response.setError(I18n.get(ProductionExceptionMessage.MANUF_ORDER_NO_GENERATION));
       }
 
       response.setCanClose(true);

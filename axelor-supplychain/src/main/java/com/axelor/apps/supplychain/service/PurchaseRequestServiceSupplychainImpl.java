@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,48 +14,51 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service;
 
-import com.axelor.apps.purchase.db.PurchaseOrder;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.Company;
 import com.axelor.apps.purchase.db.PurchaseRequest;
+import com.axelor.apps.purchase.db.repo.PurchaseRequestRepository;
 import com.axelor.apps.purchase.service.PurchaseRequestServiceImpl;
-import com.axelor.apps.stock.db.StockLocation;
-import com.axelor.apps.stock.db.repo.StockLocationRepository;
+import com.axelor.apps.purchase.service.PurchaseRequestWorkflowService;
+import com.axelor.apps.purchase.service.purchase.request.PurchaseRequestToPoCreateService;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
-import com.axelor.exception.AxelorException;
-import com.axelor.inject.Beans;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
+import java.util.Map;
 
 public class PurchaseRequestServiceSupplychainImpl extends PurchaseRequestServiceImpl {
 
-  @Inject StockLocationRepository stockLocationRepo;
+  protected AppSupplychainService appSupplychainService;
+  protected PurchaseOrderSupplychainService purchaseOrderSupplychainService;
 
-  @Override
-  protected PurchaseOrder createPurchaseOrder(PurchaseRequest purchaseRequest)
-      throws AxelorException {
-
-    PurchaseOrder purchaseOrder = super.createPurchaseOrder(purchaseRequest);
-
-    if (Beans.get(AppSupplychainService.class).isApp("supplychain")) {
-      purchaseOrder.setStockLocation(purchaseRequest.getStockLocation());
-    }
-    return purchaseOrder;
+  @Inject
+  public PurchaseRequestServiceSupplychainImpl(
+      PurchaseRequestWorkflowService purchaseRequestWorkflowService,
+      PurchaseRequestRepository purchaseRequestRepository,
+      PurchaseRequestToPoCreateService purchaseRequestToPoCreateService,
+      AppSupplychainService appSupplychainService,
+      PurchaseOrderSupplychainService purchaseOrderSupplychainService) {
+    super(
+        purchaseRequestWorkflowService,
+        purchaseRequestRepository,
+        purchaseRequestToPoCreateService);
+    this.appSupplychainService = appSupplychainService;
+    this.purchaseOrderSupplychainService = purchaseOrderSupplychainService;
   }
 
   @Override
-  protected String getPurchaseOrderGroupBySupplierKey(PurchaseRequest purchaseRequest) {
-    String key = super.getPurchaseOrderGroupBySupplierKey(purchaseRequest);
-
-    if (!Beans.get(AppSupplychainService.class).isApp("supplychain")) {
-      return key;
+  public Map<String, Object> getDefaultValues(PurchaseRequest purchaseRequest, Company company)
+      throws AxelorException {
+    Map<String, Object> values = super.getDefaultValues(purchaseRequest, company);
+    if (appSupplychainService.isApp("supplychain")) {
+      purchaseRequest.setStockLocation(
+          purchaseOrderSupplychainService.getStockLocation(
+              purchaseRequest.getSupplierPartner(), purchaseRequest.getCompany()));
+      values.put("stockLocation", purchaseRequest.getStockLocation());
     }
-
-    StockLocation stockLocation = purchaseRequest.getStockLocation();
-    if (stockLocation != null) {
-      key = key + "_" + stockLocation.getId().toString();
-    }
-    return key;
+    return values;
   }
 }

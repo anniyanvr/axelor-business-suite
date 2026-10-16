@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,11 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.purchase.service;
 
 import com.axelor.apps.account.db.TaxLine;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.Company;
+import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.PriceList;
 import com.axelor.apps.base.db.PriceListLine;
 import com.axelor.apps.base.db.Product;
@@ -25,38 +29,27 @@ import com.axelor.apps.base.db.Unit;
 import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.purchase.db.PurchaseOrderLine;
 import com.axelor.apps.purchase.db.SupplierCatalog;
-import com.axelor.exception.AxelorException;
-import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
 
 public interface PurchaseOrderLineService {
 
   public BigDecimal getExTaxUnitPrice(
-      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine, TaxLine taxLine)
+      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine, Set<TaxLine> taxLineSet)
       throws AxelorException;
 
   public BigDecimal getInTaxUnitPrice(
-      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine, TaxLine taxLine)
+      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine, Set<TaxLine> taxLineSet)
       throws AxelorException;
 
   public BigDecimal getPurchaseMaxPrice(
       PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
 
-  public TaxLine getTaxLine(PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine)
-      throws AxelorException;
-
-  /**
-   * Get optional tax line.
-   *
-   * @param purchaseOrder
-   * @param purchaseOrderLine
-   * @return
-   */
-  Optional<TaxLine> getOptionalTaxLine(
-      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine);
+  public Set<TaxLine> getTaxLineSet(
+      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
 
   public BigDecimal computePurchaseOrderLine(PurchaseOrderLine purchaseOrderLine);
 
@@ -66,7 +59,7 @@ public interface PurchaseOrderLineService {
   public PriceListLine getPriceListLine(
       PurchaseOrderLine purchaseOrderLine, PriceList priceList, BigDecimal price);
 
-  public Map<String, BigDecimal> compute(
+  public Map<String, Object> compute(
       PurchaseOrderLine purchaseOrderLine, PurchaseOrder purchaseOrder) throws AxelorException;
 
   public BigDecimal computeDiscount(PurchaseOrderLine purchaseOrderLine, Boolean inAti);
@@ -80,13 +73,8 @@ public interface PurchaseOrderLineService {
       Unit unit)
       throws AxelorException;
 
-  public BigDecimal getQty(PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine)
-      throws AxelorException;
-
   public SupplierCatalog getSupplierCatalog(
       PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
-
-  public BigDecimal convertUnitPrice(Boolean priceIsAti, TaxLine taxLine, BigDecimal price);
 
   public Map<String, Object> updateInfoFromCatalog(
       PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
@@ -97,29 +85,12 @@ public interface PurchaseOrderLineService {
   public int getDiscountTypeSelect(
       PurchaseOrderLine purchaseOrderLine, PurchaseOrder purchaseOrder, BigDecimal price);
 
-  public Unit getPurchaseUnit(PurchaseOrderLine purchaseOrderLine);
-
-  /**
-   * Get minimum quantity from supplier catalog if available, else return one.
-   *
-   * @param purchaseOrder
-   * @param purchaseOrderLine
-   * @return
-   */
-  public BigDecimal getMinQty(PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine)
-      throws AxelorException;
-
-  public void checkMinQty(
-      PurchaseOrder purchaseOrder,
+  public void checkMultipleQty(
+      Company company,
+      Partner supplierPartner,
       PurchaseOrderLine purchaseOrderLine,
-      ActionRequest request,
       ActionResponse response)
       throws AxelorException;
-
-  public void checkMultipleQty(PurchaseOrderLine purchaseOrderLine, ActionResponse response);
-
-  public String[] getProductSupplierInfos(
-      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
 
   PurchaseOrderLine fill(PurchaseOrderLine line, PurchaseOrder purchaseOrder)
       throws AxelorException;
@@ -128,4 +99,18 @@ public interface PurchaseOrderLineService {
 
   public void checkDifferentSupplier(
       PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine, ActionResponse response);
+
+  public List<PurchaseOrderLine> updateLinesAfterFiscalPositionChange(PurchaseOrder purchaseOrder)
+      throws AxelorException;
+
+  public Map<String, Object> recomputeTax(
+      PurchaseOrder purchaseOrder, PurchaseOrderLine purchaseOrderLine) throws AxelorException;
+
+  public void validateDeletion(PurchaseOrderLine purchaseOrderLine) throws AxelorException;
+
+  void updatePurchaseOrderLineList(PurchaseOrder purchaseOrder) throws AxelorException;
+
+  Map<String, Object> updatePriceForQtyLimit(
+      PurchaseOrderLine purchaseOrderLine, PurchaseOrder purchaseOrder, boolean isQtyLimitBroken)
+      throws AxelorException;
 }

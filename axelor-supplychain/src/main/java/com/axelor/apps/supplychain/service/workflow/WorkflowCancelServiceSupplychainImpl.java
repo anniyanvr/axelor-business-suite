@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service.workflow;
 
@@ -22,6 +23,7 @@ import com.axelor.apps.account.db.InvoiceLine;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.invoice.workflow.cancel.WorkflowCancelServiceImpl;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.purchase.db.PurchaseOrderLine;
 import com.axelor.apps.purchase.db.repo.PurchaseOrderRepository;
@@ -29,10 +31,10 @@ import com.axelor.apps.sale.db.SaleOrder;
 import com.axelor.apps.sale.db.SaleOrderLine;
 import com.axelor.apps.sale.db.repo.SaleOrderRepository;
 import com.axelor.apps.supplychain.service.PurchaseOrderInvoiceService;
-import com.axelor.apps.supplychain.service.SaleOrderInvoiceService;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.supplychain.service.SaleInvoicingStateService;
+import com.axelor.apps.supplychain.service.saleorder.SaleOrderInvoiceService;
 import com.google.common.collect.Lists;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -52,17 +54,21 @@ public class WorkflowCancelServiceSupplychainImpl extends WorkflowCancelServiceI
 
   private SaleOrderRepository saleOrderRepository;
 
+  protected SaleInvoicingStateService saleInvoicingStateService;
+
   @Inject
   public WorkflowCancelServiceSupplychainImpl(
       SaleOrderInvoiceService saleOrderInvoiceService,
       PurchaseOrderInvoiceService purchaseOrderInvoiceService,
       SaleOrderRepository saleOrderRepository,
-      PurchaseOrderRepository purchaseOrderRepository) {
+      PurchaseOrderRepository purchaseOrderRepository,
+      SaleInvoicingStateService saleInvoicingStateService) {
 
     this.saleOrderInvoiceService = saleOrderInvoiceService;
     this.purchaseOrderInvoiceService = purchaseOrderInvoiceService;
     this.saleOrderRepository = saleOrderRepository;
     this.purchaseOrderRepository = purchaseOrderRepository;
+    this.saleInvoicingStateService = saleInvoicingStateService;
   }
 
   private PurchaseOrderRepository purchaseOrderRepository;
@@ -99,6 +105,7 @@ public class WorkflowCancelServiceSupplychainImpl extends WorkflowCancelServiceI
           "Update the invoiced amount of the sale order : {}", invoiceSaleOrder.getSaleOrderSeq());
       invoiceSaleOrder.setAmountInvoiced(
           saleOrderInvoiceService.getInvoicedAmount(invoiceSaleOrder, invoice.getId(), true));
+      saleInvoicingStateService.updateInvoicingState(invoiceSaleOrder);
 
     } else {
 
@@ -118,6 +125,7 @@ public class WorkflowCancelServiceSupplychainImpl extends WorkflowCancelServiceI
         log.debug("Update the invoiced amount of the sale order : {}", saleOrder.getSaleOrderSeq());
         saleOrder.setAmountInvoiced(
             saleOrderInvoiceService.getInvoicedAmount(saleOrder, invoice.getId(), true));
+        saleInvoicingStateService.updateInvoicingState(saleOrder);
         saleOrderRepository.save(saleOrder);
       }
     }
@@ -177,7 +185,6 @@ public class WorkflowCancelServiceSupplychainImpl extends WorkflowCancelServiceI
       // Get all different purchaseOrders from invoice
 
       List<PurchaseOrder> purchaseOrderList = Lists.newArrayList();
-      ;
 
       for (InvoiceLine invoiceLine : invoice.getInvoiceLineList()) {
 

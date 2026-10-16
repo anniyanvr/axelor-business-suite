@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.advanced.imports;
 
@@ -31,7 +32,7 @@ import com.axelor.meta.db.repo.MetaModelRepository;
 import com.axelor.rpc.Context;
 import com.axelor.rpc.JsonContext;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -56,13 +57,13 @@ public class FileTabServiceImpl implements FileTabService {
 
     for (FileField fileField : fileTab.getFileFieldList()) {
 
+      String columnTitle = fileField.getColumnTitle();
+      String[] subFields = columnTitle.split("\\.");
+
       MetaField importField =
           metaFieldRepo
               .all()
-              .filter(
-                  "self.label = ?1 AND self.metaModel.id = ?2",
-                  fileField.getColumnTitle(),
-                  model.getId())
+              .filter("self.name = ?1 AND self.metaModel.id = ?2", subFields[0], model.getId())
               .fetchOne();
 
       if (importField != null) {
@@ -72,8 +73,8 @@ public class FileTabServiceImpl implements FileTabService {
         }
 
         fileField.setImportField(importField);
-        if (!Strings.isNullOrEmpty(relationship)) {
-          String subImportField = this.getSubImportField(importField);
+        if (!Strings.isNullOrEmpty(relationship) && subFields.length > 1) {
+          String subImportField = this.getSubImportField(importField, subFields[1]);
           fileField.setSubImportField(subImportField);
         }
         fileField = fileFieldService.fillType(fileField);
@@ -95,16 +96,16 @@ public class FileTabServiceImpl implements FileTabService {
     return fileTab;
   }
 
-  private String getSubImportField(MetaField importField) throws ClassNotFoundException {
+  protected String getSubImportField(MetaField importField, String subField)
+      throws ClassNotFoundException {
     String modelName = importField.getTypeName();
     MetaModel metaModel = Beans.get(MetaModelRepository.class).findByName(modelName);
 
-    AdvancedImportService advancedImportService = Beans.get(AdvancedImportService.class);
-    Mapper mapper = advancedImportService.getMapper(metaModel.getFullName());
-
-    return (mapper != null && mapper.getNameField() != null)
-        ? mapper.getNameField().getName()
-        : null;
+    return metaModel.getMetaFields().stream()
+        .filter(metaField -> subField.equals(metaField.getName()))
+        .findFirst()
+        .map(MetaField::getName)
+        .orElse(null);
   }
 
   @Override

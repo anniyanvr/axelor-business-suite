@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,23 +14,74 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.project.service.app;
 
-import com.axelor.apps.base.db.AppProject;
-import com.axelor.apps.base.db.repo.AppProjectRepository;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.Company;
+import com.axelor.apps.base.db.repo.CompanyRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.app.AppBaseServiceImpl;
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
+import com.axelor.apps.project.db.ProjectConfig;
+import com.axelor.apps.project.db.ProjectStatus;
+import com.axelor.apps.project.db.repo.ProjectConfigRepository;
+import com.axelor.apps.project.exception.ProjectExceptionMessage;
+import com.axelor.i18n.I18n;
+import com.axelor.studio.app.service.AppService;
+import com.axelor.studio.db.AppProject;
+import com.axelor.studio.db.repo.AppProjectRepository;
+import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import java.util.List;
 
 @Singleton
 public class AppProjectServiceImpl extends AppBaseServiceImpl implements AppProjectService {
 
-  @Inject private AppProjectRepository appProjectRepo;
+  protected AppProjectRepository appProjectRepo;
+  protected CompanyRepository companyRepo;
+  protected ProjectConfigRepository projectConfigRepo;
+
+  @Inject
+  public AppProjectServiceImpl(
+      AppService appService,
+      AppProjectRepository appProjectRepo,
+      CompanyRepository companyRepo,
+      ProjectConfigRepository projectConfigRepo) {
+    super(appService);
+    this.appProjectRepo = appProjectRepo;
+    this.companyRepo = companyRepo;
+    this.projectConfigRepo = projectConfigRepo;
+  }
 
   @Override
   public AppProject getAppProject() {
-    return appProjectRepo.all().fetchOne();
+    return appProjectRepo.all().cacheable().autoFlush(false).fetchOne();
+  }
+
+  @Override
+  @Transactional
+  public void generateProjectConfigurations() {
+
+    List<Company> companies = companyRepo.all().filter("self.projectConfig is null").fetch();
+
+    for (Company company : companies) {
+      ProjectConfig projectConfig = new ProjectConfig();
+      projectConfig.setCompany(company);
+      projectConfigRepo.save(projectConfig);
+    }
+  }
+
+  @Override
+  public ProjectStatus getCompletedProjectStatus() throws AxelorException {
+    ProjectStatus projectStatus = getAppProject().getCompletedProjectStatus();
+    if (projectStatus == null) {
+      throw new AxelorException(
+          getAppProject(),
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(ProjectExceptionMessage.PROJECT_CONFIG_COMPLETED_PROJECT_STATUS_MISSING));
+    }
+    return projectStatus;
   }
 }

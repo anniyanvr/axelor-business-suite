@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.web;
 
@@ -21,19 +22,20 @@ import com.axelor.apps.base.db.ICalendar;
 import com.axelor.apps.base.db.ICalendarEvent;
 import com.axelor.apps.base.db.ImportConfiguration;
 import com.axelor.apps.base.db.repo.ICalendarRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.ical.ICalendarException;
 import com.axelor.apps.base.ical.ICalendarService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
-import com.axelor.exception.service.TraceBackService;
+import com.axelor.file.temp.TempFiles;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.MetaFiles;
 import com.axelor.meta.schema.actions.ActionView;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -48,7 +50,7 @@ public class ICalendarController {
   public void exportCalendar(ActionRequest request, ActionResponse response)
       throws IOException, ParseException {
     ICalendar cal = request.getContext().asType(ICalendar.class);
-    Path tempPath = MetaFiles.createTempFile(cal.getName(), ".ics");
+    Path tempPath = TempFiles.createTempFile(cal.getName(), ".ics");
     Beans.get(ICalendarService.class).export(cal, tempPath.toFile());
     Beans.get(MetaFiles.class)
         .attach(new FileInputStream(tempPath.toFile()), cal.getName() + ".ics", cal);
@@ -78,7 +80,7 @@ public class ICalendarController {
   public void importCalendar(ActionRequest request, ActionResponse response) {
     ICalendar cal = request.getContext().asType(ICalendar.class);
     response.setView(
-        ActionView.define(I18n.get(IExceptionMessage.IMPORT_CALENDAR))
+        ActionView.define(I18n.get(BaseExceptionMessage.IMPORT_CALENDAR))
             .model("com.axelor.apps.base.db.ImportConfiguration")
             .add("form", "import-icalendar-form")
             .param("popup", "reload")
@@ -96,7 +98,7 @@ public class ICalendarController {
       response.setValue("isValid", true);
     } catch (Exception e) {
       TraceBackService.trace(e);
-      response.setFlash("Configuration error");
+      response.setInfo("Configuration error");
       response.setValue("isValid", false);
     }
   }
@@ -130,9 +132,9 @@ public class ICalendarController {
             .domain(
                 "self.user.id = :_userId"
                     + " OR self.calendar.user.id = :_userId"
-                    + " OR :_userId IN (SELECT attendee.user FROM self.attendees attendee)"
+                    + " OR :_userId IN (SELECT attendee.user.id FROM self.attendees attendee)"
                     + " OR self.organizer.user.id = :_userId"
-                    + " OR :_userId IN (SELECT setting.sharedWith FROM self.calendar.sharingSettingList setting WHERE setting.visible = TRUE)")
+                    + " OR :_userId IN (SELECT setting.sharedWith.id FROM self.calendar.sharingSettingList setting WHERE setting.visible = TRUE)")
             .context("_userId", user.getId())
             .map());
   }

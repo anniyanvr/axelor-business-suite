@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,13 +14,13 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.web;
 
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.imports.ImportDemoDataService;
-import com.axelor.exception.AxelorException;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.MetaFiles;
@@ -28,7 +29,7 @@ import com.axelor.meta.db.repo.MetaFileRepository;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
 import com.google.common.io.Files;
-import com.google.inject.Singleton;
+import jakarta.inject.Singleton;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -40,7 +41,10 @@ import java.util.Map;
 public class ImportDemoDataController {
 
   public void importDemoDataExcel(ActionRequest request, ActionResponse response)
-      throws FileNotFoundException, IOException, AxelorException, ParseException,
+      throws FileNotFoundException,
+          IOException,
+          AxelorException,
+          ParseException,
           ClassNotFoundException {
     MetaFile metaFile =
         Beans.get(MetaFileRepository.class)
@@ -52,9 +56,9 @@ public class ImportDemoDataController {
       File tmpFile = File.createTempFile("Import", ".log");
 
       if (Beans.get(ImportDemoDataService.class).importDemoDataExcel(excelFile, tmpFile)) {
-        response.setFlash(I18n.get(IExceptionMessage.IMPORT_COMPLETED_MESSAGE));
+        response.setInfo(I18n.get(BaseExceptionMessage.IMPORT_COMPLETED_MESSAGE));
       } else {
-        response.setFlash(I18n.get(IExceptionMessage.INVALID_DATA_FORMAT_ERROR));
+        response.setInfo(I18n.get(BaseExceptionMessage.INVALID_DATA_FORMAT_ERROR));
       }
 
       response.setAttr("$logFile", "hidden", false);
@@ -62,7 +66,7 @@ public class ImportDemoDataController {
       response.setValue("$logFile", Beans.get(MetaFiles.class).upload(inStream, "Import.log"));
 
     } else {
-      response.setError(I18n.get(IExceptionMessage.VALIDATE_FILE_TYPE));
+      response.setError(I18n.get(BaseExceptionMessage.VALIDATE_FILE_TYPE));
     }
   }
 }

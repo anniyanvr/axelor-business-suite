@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,28 +14,31 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service;
 
 import com.axelor.apps.account.service.app.AppAccountService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.purchase.db.PurchaseOrder;
+import com.axelor.apps.purchase.db.PurchaseOrderLine;
 import com.axelor.apps.purchase.db.repo.PurchaseOrderRepository;
 import com.axelor.apps.purchase.service.PurchaseOrderService;
+import com.axelor.apps.purchase.service.PurchaseOrderTypeSelectService;
 import com.axelor.apps.purchase.service.PurchaseOrderWorkflowServiceImpl;
 import com.axelor.apps.purchase.service.app.AppPurchaseService;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
-import com.axelor.exception.AxelorException;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import java.time.LocalDate;
+import java.util.Objects;
 
 public class PurchaseOrderWorkflowServiceSupplychainImpl extends PurchaseOrderWorkflowServiceImpl {
 
   protected AppSupplychainService appSupplychainService;
   protected PurchaseOrderStockService purchaseOrderStockService;
   protected AppAccountService appAccountService;
-  protected BudgetSupplychainService budgetSupplychainService;
   protected PurchaseOrderSupplychainService purchaseOrderSupplychainService;
 
   @Inject
@@ -45,13 +49,16 @@ public class PurchaseOrderWorkflowServiceSupplychainImpl extends PurchaseOrderWo
       AppSupplychainService appSupplychainService,
       PurchaseOrderStockService purchaseOrderStockService,
       AppAccountService appAccountService,
-      BudgetSupplychainService budgetSupplychainService,
-      PurchaseOrderSupplychainService purchaseOrderSupplychainService) {
-    super(purchaseOrderService, purchaseOrderRepo, appPurchaseService);
+      PurchaseOrderSupplychainService purchaseOrderSupplychainService,
+      PurchaseOrderTypeSelectService purchaseOrderTypeSelectService) {
+    super(
+        purchaseOrderService,
+        purchaseOrderRepo,
+        appPurchaseService,
+        purchaseOrderTypeSelectService);
     this.appSupplychainService = appSupplychainService;
     this.purchaseOrderStockService = purchaseOrderStockService;
     this.appAccountService = appAccountService;
-    this.budgetSupplychainService = budgetSupplychainService;
     this.purchaseOrderSupplychainService = purchaseOrderSupplychainService;
   }
 
@@ -60,8 +67,19 @@ public class PurchaseOrderWorkflowServiceSupplychainImpl extends PurchaseOrderWo
   public void validatePurchaseOrder(PurchaseOrder purchaseOrder) throws AxelorException {
     super.validatePurchaseOrder(purchaseOrder);
 
-    if (!Beans.get(AppSupplychainService.class).isApp("supplychain")) {
+    if (!appSupplychainService.isApp("supplychain")) {
       return;
+    }
+
+    if (purchaseOrder.getEstimatedReceiptDate() == null) {
+      var estimatedReceiptDate =
+          purchaseOrder.getPurchaseOrderLineList().stream()
+              .map(PurchaseOrderLine::getEstimatedReceiptDate)
+              .filter(Objects::nonNull)
+              .max(LocalDate::compareTo)
+              .orElse(null);
+
+      purchaseOrder.setEstimatedReceiptDate(estimatedReceiptDate);
     }
 
     if (appSupplychainService.getAppSupplychain().getSupplierStockMoveGenerationAuto()
@@ -69,29 +87,11 @@ public class PurchaseOrderWorkflowServiceSupplychainImpl extends PurchaseOrderWo
       purchaseOrderStockService.createStockMoveFromPurchaseOrder(purchaseOrder);
     }
 
-    if (appAccountService.getAppBudget().getApp().getActive()
-        && !appAccountService.getAppBudget().getManageMultiBudget()) {
-      purchaseOrderSupplychainService.generateBudgetDistribution(purchaseOrder);
-    }
     int intercoPurchaseCreatingStatus =
-        Beans.get(AppSupplychainService.class)
-            .getAppSupplychain()
-            .getIntercoPurchaseCreatingStatusSelect();
+        appSupplychainService.getAppSupplychain().getIntercoPurchaseCreatingStatusSelect();
     if (purchaseOrder.getInterco()
         && intercoPurchaseCreatingStatus == PurchaseOrderRepository.STATUS_VALIDATED) {
       Beans.get(IntercoService.class).generateIntercoSaleFromPurchase(purchaseOrder);
-    }
-
-    budgetSupplychainService.updateBudgetLinesFromPurchaseOrder(purchaseOrder);
-  }
-
-  @Override
-  @Transactional
-  public void cancelPurchaseOrder(PurchaseOrder purchaseOrder) {
-    super.cancelPurchaseOrder(purchaseOrder);
-
-    if (Beans.get(AppSupplychainService.class).isApp("supplychain")) {
-      budgetSupplychainService.updateBudgetLinesFromPurchaseOrder(purchaseOrder);
     }
   }
 }

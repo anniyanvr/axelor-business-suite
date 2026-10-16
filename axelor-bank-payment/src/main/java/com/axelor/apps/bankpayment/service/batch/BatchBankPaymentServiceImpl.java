@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.batch;
 
@@ -26,52 +27,49 @@ import com.axelor.apps.account.db.PaymentSchedule;
 import com.axelor.apps.account.db.PaymentScheduleLine;
 import com.axelor.apps.account.db.Reconcile;
 import com.axelor.apps.account.db.repo.InvoicePaymentRepository;
+import com.axelor.apps.account.db.repo.PaymentModeRepository;
 import com.axelor.apps.account.db.repo.PaymentScheduleLineRepository;
 import com.axelor.apps.account.db.repo.PaymentScheduleRepository;
 import com.axelor.apps.account.db.repo.ReconcileRepository;
 import com.axelor.apps.account.service.PaymentScheduleService;
-import com.axelor.apps.account.service.move.MoveService;
+import com.axelor.apps.account.service.moveline.MoveLineToolService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentValidateService;
 import com.axelor.apps.bankpayment.db.BankOrder;
 import com.axelor.apps.bankpayment.db.BankOrderLine;
 import com.axelor.apps.bankpayment.db.repo.BankOrderRepository;
-import com.axelor.apps.bankpayment.exception.IExceptionMessage;
+import com.axelor.apps.bankpayment.exception.BankPaymentExceptionMessage;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderCreateService;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderLineService;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderMergeService;
-import com.axelor.apps.bankpayment.service.bankorder.BankOrderService;
+import com.axelor.apps.bankpayment.service.bankorder.BankOrderValidationService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Batch;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Currency;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.repo.BatchRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.administration.AbstractBatch;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.tool.QueryBuilder;
 import com.axelor.db.JPA;
 import com.axelor.db.Query;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
-import com.google.inject.Inject;
+import com.axelor.utils.helpers.QueryBuilder;
 import com.google.inject.persist.Transactional;
-import java.io.IOException;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
 
 public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
   protected AppBaseService appBaseService;
-  protected MoveService moveService;
   protected InvoicePaymentValidateService invoicePaymentValidateService;
   protected PaymentScheduleService paymentScheduleService;
 
   protected BankOrderCreateService bankOrderCreateService;
-  protected BankOrderService bankOrderService;
+  protected BankOrderValidationService bankOrderValidationService;
   protected BankOrderLineService bankOrderLineService;
   protected BankOrderMergeService bankOrderMergeService;
 
@@ -80,28 +78,29 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
   protected BankOrderRepository bankOrderRepo;
   protected BatchRepository batchRepo;
 
+  protected MoveLineToolService moveLineToolService;
+
   @Inject
   public BatchBankPaymentServiceImpl(
       AppBaseService appBaseService,
-      MoveService moveService,
       InvoicePaymentValidateService invoicePaymentValidateService,
       PaymentScheduleService paymentScheduleService,
       BankOrderCreateService bankOrderCreateService,
-      BankOrderService bankOrderService,
+      BankOrderValidationService bankOrderValidationService,
       BankOrderLineService bankOrderLineService,
       BankOrderMergeService bankOrderMergeService,
       ReconcileRepository reconcileRepo,
       InvoicePaymentRepository invoicePaymentRepo,
       BankOrderRepository bankOrderRepo,
-      BatchRepository batchRepo) {
+      BatchRepository batchRepo,
+      MoveLineToolService moveLineToolService) {
 
     this.appBaseService = appBaseService;
-    this.moveService = moveService;
     this.invoicePaymentValidateService = invoicePaymentValidateService;
     this.paymentScheduleService = paymentScheduleService;
 
     this.bankOrderCreateService = bankOrderCreateService;
-    this.bankOrderService = bankOrderService;
+    this.bankOrderValidationService = bankOrderValidationService;
     this.bankOrderLineService = bankOrderLineService;
     this.bankOrderMergeService = bankOrderMergeService;
 
@@ -109,6 +108,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
     this.invoicePaymentRepo = invoicePaymentRepo;
     this.bankOrderRepo = bankOrderRepo;
     this.batchRepo = batchRepo;
+    this.moveLineToolService = moveLineToolService;
   }
 
   @Override
@@ -118,8 +118,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public BankOrder createBankOrder(Batch batch)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+  public BankOrder createBankOrder(Batch batch) throws AxelorException {
 
     PaymentScheduleLine paymentScheduleLine = getPaymentScheduleLineDoneListQuery(batch).fetchOne();
 
@@ -127,7 +126,8 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
       throw new AxelorException(
           batch,
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.BATCH_DIRECT_DEBIT_NO_PROCESSED_PAYMENT_SCHEDULE_LINES));
+          I18n.get(
+              BankPaymentExceptionMessage.BATCH_DIRECT_DEBIT_NO_PROCESSED_PAYMENT_SCHEDULE_LINES));
     }
 
     PaymentSchedule paymentSchedule = paymentScheduleLine.getPaymentSchedule();
@@ -141,14 +141,13 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
         throw new AxelorException(
             paymentSchedule,
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.BATCH_DIRECT_DEBIT_UNKNOWN_DATA_TYPE));
+            I18n.get(BankPaymentExceptionMessage.BATCH_DIRECT_DEBIT_UNKNOWN_DATA_TYPE));
     }
   }
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public BankOrder createBankOrderFromPaymentScheduleLines(Batch batch)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+  public BankOrder createBankOrderFromPaymentScheduleLines(Batch batch) throws AxelorException {
 
     List<PaymentScheduleLine> paymentScheduleLineList;
     int offset = 0;
@@ -172,7 +171,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
       throw new AxelorException(
           batch,
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
+          I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
     }
 
     BankOrder bankOrder = bankOrderRepo.find(bankOrderList.iterator().next().getId());
@@ -183,14 +182,14 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
 
   @Transactional(rollbackOn = {Exception.class})
   protected void createBankOrders(Batch batch, Collection<PaymentScheduleLine> paymentScheduleLines)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+      throws AxelorException {
 
     for (PaymentScheduleLine paymentScheduleLine : paymentScheduleLines) {
       PaymentSchedule paymentSchedule = paymentScheduleLine.getPaymentSchedule();
       MoveLine creditMoveLine = paymentScheduleLine.getAdvanceMoveLine();
 
       for (Invoice invoice : paymentSchedule.getInvoiceSet()) {
-        MoveLine debitMoveLine = moveService.getMoveLineService().getDebitCustomerMoveLine(invoice);
+        MoveLine debitMoveLine = moveLineToolService.getDebitCustomerMoveLine(invoice);
         Reconcile reconcile = reconcileRepo.findByMoveLines(debitMoveLine, creditMoveLine);
 
         if (reconcile == null) {
@@ -203,8 +202,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
   }
 
   @Transactional(rollbackOn = {Exception.class})
-  protected void createBankOrders(Batch batch, Reconcile reconcile)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+  protected void createBankOrders(Batch batch, Reconcile reconcile) throws AxelorException {
 
     for (InvoicePayment invoicePayment : invoicePaymentRepo.findByReconcile(reconcile).fetch()) {
       if (invoicePayment.getBankOrder() != null) {
@@ -228,7 +226,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
   @Override
   @Transactional(rollbackOn = {Exception.class})
   public BankOrder createBankOrderFromMonthlyPaymentScheduleLines(Batch batch)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+      throws AxelorException {
 
     AccountingBatch accountingBatch = batch.getAccountingBatch();
     LocalDate bankOrderDate = accountingBatch.getDueDate();
@@ -260,7 +258,9 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
             currency,
             senderReference,
             senderLabel,
-            BankOrderRepository.TECHNICAL_ORIGIN_AUTOMATIC);
+            BankOrderRepository.TECHNICAL_ORIGIN_AUTOMATIC,
+            BankOrderRepository.FUNCTIONAL_ORIGIN_BATCH_DEBIT,
+            PaymentModeRepository.ACCOUNTING_TRIGGER_IMMEDIATE);
     bankOrder = JPA.save(bankOrder);
 
     List<PaymentScheduleLine> paymentScheduleLineList;
@@ -305,7 +305,7 @@ public class BatchBankPaymentServiceImpl implements BatchBankPaymentService {
 
     bankOrder = bankOrderRepo.find(bankOrder.getId());
     bankOrder = bankOrderRepo.save(bankOrder);
-    bankOrderService.confirm(bankOrder);
+    bankOrderValidationService.confirm(bankOrder);
 
     batch = batchRepo.find(batch.getId());
     batch.setBankOrder(bankOrder);

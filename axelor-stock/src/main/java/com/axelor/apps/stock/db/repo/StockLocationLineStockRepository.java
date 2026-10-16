@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,30 +14,60 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.stock.db.repo;
 
 import com.axelor.apps.base.db.Product;
+import com.axelor.apps.base.service.app.AppBaseService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.apps.stock.db.StockLocationLine;
+import com.axelor.apps.stock.service.StockLocationLineService;
 import com.axelor.apps.stock.service.WeightedAveragePriceService;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.inject.Beans;
-import javax.persistence.PersistenceException;
+import jakarta.inject.Inject;
+import jakarta.persistence.PersistenceException;
+import java.util.Map;
 
 public class StockLocationLineStockRepository extends StockLocationLineRepository {
+
+  protected WeightedAveragePriceService weightedAveragePriceService;
+
+  @Inject
+  public StockLocationLineStockRepository(WeightedAveragePriceService weightedAveragePriceService) {
+    this.weightedAveragePriceService = weightedAveragePriceService;
+  }
 
   @Override
   public StockLocationLine save(StockLocationLine entity) {
     try {
       Product product = entity.getProduct();
       if (entity.getIsAvgPriceChanged()) {
-        Beans.get(WeightedAveragePriceService.class).computeAvgPriceForProduct(product);
+        weightedAveragePriceService.computeAvgPriceForProduct(product);
       }
       return super.save(entity);
     } catch (Exception e) {
       TraceBackService.traceExceptionFromSaveMethod(e);
-      throw new PersistenceException(e);
+      throw new PersistenceException(e.getMessage(), e);
     }
+  }
+
+  @Override
+  public Map<String, Object> populate(Map<String, Object> json, Map<String, Object> context) {
+    json.put("$nbDecimalDigitForQty", Beans.get(AppBaseService.class).getNbDecimalDigitForQty());
+    json.put(
+        "$nbDecimalDigitForUnitPrice",
+        Beans.get(AppBaseService.class).getNbDecimalDigitForUnitPrice());
+
+    if (context != null
+        && Boolean.TRUE.equals(context.get("_isStockLocationLineValueDisplayed"))
+        && json.get("id") != null) {
+      json.put(
+          "stockLocationLineValue",
+          Beans.get(StockLocationLineService.class)
+              .getStockLocationLineValue((Long) json.get("id")));
+    }
+
+    return super.populate(json, context);
   }
 }

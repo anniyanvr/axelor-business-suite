@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,40 +14,41 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.stock.web;
 
-import com.axelor.apps.ReportFactory;
-import com.axelor.apps.base.db.Wizard;
-import com.axelor.apps.report.engine.ReportSettings;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.callable.ControllerCallableTool;
+import com.axelor.apps.base.db.PrintingTemplate;
+import com.axelor.apps.base.db.repo.PrintingTemplateRepository;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.apps.stock.db.StockLocation;
-import com.axelor.apps.stock.db.repo.StockLocationRepository;
-import com.axelor.apps.stock.exception.IExceptionMessage;
-import com.axelor.apps.stock.report.IReport;
-import com.axelor.apps.stock.service.StockLocationService;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.stock.exception.StockExceptionMessage;
+import com.axelor.apps.stock.service.StockLocationAttrsService;
+import com.axelor.apps.stock.service.StockLocationDomainService;
+import com.axelor.apps.stock.service.StockLocationPrintCallableService;
+import com.axelor.apps.stock.service.StockLocationPrintService;
+import com.axelor.common.ObjectUtils;
+import com.axelor.db.mapper.Mapper;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.schema.actions.ActionView;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
 import com.axelor.rpc.Context;
-import com.google.common.base.Joiner;
-import com.google.inject.Singleton;
+import com.axelor.utils.db.Wizard;
+import jakarta.inject.Singleton;
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
+import org.apache.commons.lang3.ArrayUtils;
 import org.eclipse.birt.core.exception.BirtException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Singleton
 public class StockLocationController {
 
-  private final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   /**
    * Method that generate inventory as a pdf
    *
@@ -56,90 +58,62 @@ public class StockLocationController {
    * @throws BirtException
    * @throws IOException
    */
+  @SuppressWarnings("unchecked")
   public void print(ActionRequest request, ActionResponse response) throws AxelorException {
+    try {
+      Context context = request.getContext();
 
-    Context context = request.getContext();
-    @SuppressWarnings("unchecked")
-    LinkedHashMap<String, Object> stockLocationMap =
-        (LinkedHashMap<String, Object>) context.get("_stockLocation");
-    Integer stockLocationId = (Integer) stockLocationMap.get("id");
-    StockLocationService stockLocationService = Beans.get(StockLocationService.class);
-    StockLocationRepository stockLocationRepository = Beans.get(StockLocationRepository.class);
+      // print from form
+      LinkedHashMap<String, Object> stockLocationMap =
+          (LinkedHashMap<String, Object>) context.get("_stockLocation");
+      Integer stockLocationId = (Integer) stockLocationMap.get("id");
 
-    StockLocation stockLocation =
-        stockLocationId != null ? stockLocationRepository.find(new Long(stockLocationId)) : null;
-    String locationIds = "";
+      // print from grid selection
+      List<Integer> selectedStockLocationIds = (List<Integer>) context.get("_ids");
 
-    String printType = (String) context.get("printingType");
-    String exportType = (String) context.get("exportTypeSelect");
+      boolean withoutDetailsByStockLocation =
+          context.get("withoutDetailsByStockLocation") != null
+              && (boolean) context.get("withoutDetailsByStockLocation");
 
-    @SuppressWarnings("unchecked")
-    List<Integer> lstSelectedLocations = (List<Integer>) context.get("_ids");
-    if (lstSelectedLocations != null) {
-      for (Integer it : lstSelectedLocations) {
-        Set<Long> idSet =
-            stockLocationService.getContentStockLocationIds(
-                stockLocationRepository.find(new Long(it)));
-        if (!idSet.isEmpty()) {
-          locationIds += Joiner.on(",").join(idSet) + ",";
-        }
-      }
-    }
+      Long[] idsArray =
+          ObjectUtils.notEmpty(selectedStockLocationIds)
+              ? ArrayUtils.toObject(
+                  selectedStockLocationIds.stream().mapToLong(Long::valueOf).toArray())
+              : new Long[] {Long.valueOf(stockLocationId)};
 
-    if (!locationIds.equals("")) {
-      locationIds = locationIds.substring(0, locationIds.length() - 1);
-      stockLocation = stockLocationRepository.find(new Long(lstSelectedLocations.get(0)));
-    } else if (stockLocation != null && stockLocation.getId() != null) {
-      Set<Long> idSet =
-          stockLocationService.getContentStockLocationIds(
-              stockLocationRepository.find(stockLocation.getId()));
-      if (!idSet.isEmpty()) {
-        locationIds = Joiner.on(",").join(idSet);
-      }
-    }
+      String printTypeStr = (String) context.get("printingType");
 
-    if (!locationIds.equals("")) {
-      String language = ReportSettings.getPrintingLocale(null);
-
-      String title = I18n.get("Stock location");
-      if (stockLocation.getName() != null) {
-        title =
-            lstSelectedLocations == null
-                ? I18n.get("Stock location") + " " + stockLocation.getName()
-                : I18n.get("Stock location(s)");
+      PrintingTemplate stockLocationPrintTemplate = null;
+      if (context.get("stockLocationPrintTemplate") != null) {
+        stockLocationPrintTemplate =
+            Mapper.toBean(
+                PrintingTemplate.class,
+                (Map<String, Object>) context.get("stockLocationPrintTemplate"));
+        stockLocationPrintTemplate =
+            Beans.get(PrintingTemplateRepository.class).find(stockLocationPrintTemplate.getId());
       }
 
-      if (stockLocationService.isConfigMissing(stockLocation, Integer.parseInt(printType))) {
-        response.setNotify(I18n.get(IExceptionMessage.STOCK_CONFIGURATION_MISSING));
+      Integer printType = Integer.parseInt(printTypeStr);
+      String financialDataDateTimeString = (String) context.get("financialDataDateTime");
+
+      StockLocationPrintCallableService callableService =
+          Beans.get(StockLocationPrintCallableService.class);
+      callableService.setPrintType(printType);
+      callableService.setStockLocationPrintTemplate(stockLocationPrintTemplate);
+      callableService.setFinancialDataDateTimeString(financialDataDateTimeString);
+      callableService.setWithoutDetailsByStockLocation(withoutDetailsByStockLocation);
+      callableService.setStockLocationIds(idsArray);
+
+      ControllerCallableTool<String> controllerCallableTool = new ControllerCallableTool<>();
+      String fileLink = controllerCallableTool.runInSeparateThread(callableService, response);
+
+      if (fileLink != null) {
+        String title = Beans.get(StockLocationPrintService.class).getOutputFileName(idsArray);
+        response.setView(ActionView.define(title).add("html", fileLink).map());
       }
-
-      String fileLink =
-          ReportFactory.createReport(IReport.STOCK_LOCATION, title + "-${date}")
-              .addParam("StockLocationId", locationIds)
-              .addParam("Timezone", null)
-              .addParam("Locale", language)
-              .addFormat(exportType)
-              .addParam("PrintType", printType)
-              .generate()
-              .getFileLink();
-
-      logger.debug("Printing " + title);
-
-      response.setView(ActionView.define(title).add("html", fileLink).map());
-
-    } else {
-      response.setFlash(I18n.get(IExceptionMessage.LOCATION_2));
-    }
-    response.setCanClose(true);
-  }
-
-  public void setStocklocationValue(ActionRequest request, ActionResponse response) {
-
-    StockLocation stockLocation = request.getContext().asType(StockLocation.class);
-    if (stockLocation.getTypeSelect() != StockLocationRepository.TYPE_VIRTUAL) {
-      response.setValue(
-          "stockLocationValue",
-          Beans.get(StockLocationService.class).getStockLocationValue(stockLocation));
+      response.setCanClose(true);
+    } catch (Exception e) {
+      TraceBackService.trace(response, e);
     }
   }
 
@@ -150,7 +124,7 @@ public class StockLocationController {
     List<Integer> lstSelectedLocations = (List<Integer>) request.getContext().get("_ids");
 
     response.setView(
-        ActionView.define(I18n.get(IExceptionMessage.STOCK_LOCATION_PRINT_WIZARD_TITLE))
+        ActionView.define(I18n.get(StockExceptionMessage.STOCK_LOCATION_PRINT_WIZARD_TITLE))
             .model(Wizard.class.getName())
             .add("form", "stock-location-print-wizard-form")
             .param("popup", "true")
@@ -160,5 +134,21 @@ public class StockLocationController {
             .context("_ids", lstSelectedLocations)
             .context("_stockLocation", stockLocation)
             .map());
+  }
+
+  public void setParentStockLocationDomain(ActionRequest request, ActionResponse response) {
+
+    StockLocation stockLocation = request.getContext().asType(StockLocation.class);
+
+    response.setAttr(
+        "parentStockLocation",
+        "domain",
+        Beans.get(StockLocationAttrsService.class).getParentStockLocationDomain(stockLocation));
+  }
+
+  public void getSiteDomain(ActionRequest request, ActionResponse response) {
+    StockLocation stockLocation = request.getContext().asType(StockLocation.class);
+    response.setAttr(
+        "site", "domain", Beans.get(StockLocationDomainService.class).getSiteDomain(stockLocation));
   }
 }

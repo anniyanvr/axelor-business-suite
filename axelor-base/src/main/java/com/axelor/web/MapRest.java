@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,38 +14,38 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.web;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Address;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.PartnerAddress;
 import com.axelor.apps.base.db.repo.PartnerRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.MapRestService;
-import com.axelor.apps.base.service.PartnerService;
-import com.axelor.apps.tool.service.TranslationService;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
 import com.axelor.common.StringUtils;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
+import com.axelor.utils.service.TranslationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import javax.ws.rs.GET;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
 
 @Path("/map")
 public class MapRest {
@@ -52,8 +53,6 @@ public class MapRest {
   @Inject private MapRestService mapRestService;
 
   @Inject private TranslationService translationService;
-
-  @Inject private PartnerService partnerService;
 
   @Inject private PartnerRepository partnerRepo;
 
@@ -70,8 +69,11 @@ public class MapRest {
           partnerRepo
               .all()
               .filter(
-                  "self.isCustomer = true OR self.isSupplier = true AND self.isContact=?", false)
+                  "(self.isCustomer = true OR self.isSupplier = true) AND self.isContact = ? AND (self.archived IS NULL OR self.archived = false)",
+                  false)
               .fetch();
+
+      Map<Partner, Address> invoicingAddressMap = mapRestService.getInvoicingAddresses(partners);
 
       ArrayNode arrayNode = nodeFactory.arrayNode();
 
@@ -79,7 +81,7 @@ public class MapRest {
 
         ObjectNode objectNode = nodeFactory.objectNode();
 
-        Address address = partnerService.getInvoicingAddress(partner);
+        Address address = invoicingAddressMap.get(partner);
         if (address != null
             && StringUtils.notBlank(address.getFullName())
             && address.getIsValidLatLong()) {
@@ -102,12 +104,6 @@ public class MapRest {
           objectNode.put("emailAddress", partner.getEmailAddress().getAddress());
         }
 
-        objectNode.put("pinColor", partner.getIsProspect() ? "red" : "orange");
-        String pinChar = partner.getIsProspect() ? "P" : "C";
-        if (partner.getIsSupplier()) {
-          pinChar = pinChar + "/S";
-        }
-        objectNode.put("pinChar", pinChar);
         arrayNode.add(objectNode);
       }
 
@@ -132,11 +128,10 @@ public class MapRest {
         throw new AxelorException(
             Partner.class,
             TraceBackRepository.CATEGORY_NO_VALUE,
-            I18n.get(IExceptionMessage.PARTNER_NOT_FOUND));
+            I18n.get(BaseExceptionMessage.PARTNER_NOT_FOUND));
       }
 
       ArrayNode arrayNode = nodeFactory.arrayNode();
-      String pinColor = getPinColor(partner);
 
       List<PartnerAddress> partnerAddressList =
           partner.getPartnerAddressList() != null
@@ -172,9 +167,6 @@ public class MapRest {
           }
         }
 
-        objectNode.put("pinColor", pinColor);
-        objectNode.put("pinChar", getPinChar(partnerAddress));
-
         arrayNode.add(objectNode);
       }
 
@@ -194,7 +186,14 @@ public class MapRest {
     ObjectNode mainNode = nodeFactory.objectNode();
     try {
       List<? extends Partner> customers =
-          partnerRepo.all().filter("self.isCustomer = true AND self.isContact=?", false).fetch();
+          partnerRepo
+              .all()
+              .filter(
+                  "self.isCustomer = true AND self.isContact = ? AND (self.archived IS NULL OR self.archived = false)",
+                  false)
+              .fetch();
+
+      Map<Partner, Address> invoicingAddressMap = mapRestService.getInvoicingAddresses(customers);
 
       ArrayNode arrayNode = nodeFactory.arrayNode();
 
@@ -202,7 +201,7 @@ public class MapRest {
 
         ObjectNode objectNode = nodeFactory.objectNode();
 
-        Address address = partnerService.getInvoicingAddress(customer);
+        Address address = invoicingAddressMap.get(customer);
         if (address != null && address.getIsValidLatLong()) {
           String addressString = mapRestService.makeAddressString(address, objectNode);
           if (StringUtils.isBlank(addressString)) {
@@ -221,8 +220,6 @@ public class MapRest {
           objectNode.put("emailAddress", customer.getEmailAddress().getAddress());
         }
 
-        objectNode.put("pinColor", "orange");
-        objectNode.put("pinChar", "C");
         arrayNode.add(objectNode);
       }
 
@@ -243,14 +240,22 @@ public class MapRest {
 
     try {
       List<? extends Partner> customers =
-          partnerRepo.all().filter("self.isProspect = true AND self.isContact=?", false).fetch();
+          partnerRepo
+              .all()
+              .filter(
+                  "self.isProspect = true AND self.isContact = ? AND (self.archived IS NULL OR self.archived = false)",
+                  false)
+              .fetch();
+
+      Map<Partner, Address> invoicingAddressMap = mapRestService.getInvoicingAddresses(customers);
+
       ArrayNode arrayNode = nodeFactory.arrayNode();
 
       for (Partner prospect : customers) {
 
         ObjectNode objectNode = nodeFactory.objectNode();
 
-        Address address = partnerService.getInvoicingAddress(prospect);
+        Address address = invoicingAddressMap.get(prospect);
         if (address != null && address.getIsValidLatLong()) {
           String addressString = mapRestService.makeAddressString(address, objectNode);
           if (StringUtils.isBlank(addressString)) {
@@ -269,8 +274,6 @@ public class MapRest {
           objectNode.put("emailAddress", prospect.getEmailAddress().getAddress());
         }
 
-        objectNode.put("pinColor", "red");
-        objectNode.put("pinChar", "P");
         arrayNode.add(objectNode);
       }
 
@@ -291,13 +294,20 @@ public class MapRest {
     try {
       ArrayNode arrayNode = nodeFactory.arrayNode();
       List<? extends Partner> customers =
-          partnerRepo.all().filter("self.isSupplier = true AND self.isContact=?", false).fetch();
+          partnerRepo
+              .all()
+              .filter(
+                  "self.isSupplier = true AND self.isContact = ? AND (self.archived IS NULL OR self.archived = false)",
+                  false)
+              .fetch();
+
+      Map<Partner, Address> invoicingAddressMap = mapRestService.getInvoicingAddresses(customers);
 
       for (Partner supplier : customers) {
 
         ObjectNode objectNode = nodeFactory.objectNode();
 
-        Address address = partnerService.getInvoicingAddress(supplier);
+        Address address = invoicingAddressMap.get(supplier);
         if (address != null && address.getIsValidLatLong()) {
           String addressString = mapRestService.makeAddressString(address, objectNode);
           if (StringUtils.isBlank(addressString)) {
@@ -316,8 +326,6 @@ public class MapRest {
           objectNode.put("emailAddress", supplier.getEmailAddress().getAddress());
         }
 
-        objectNode.put("pinColor", "purple");
-        objectNode.put("pinChar", "S");
         arrayNode.add(objectNode);
       }
 
@@ -374,25 +382,5 @@ public class MapRest {
     }
 
     return fullName;
-  }
-
-  protected String getPinColor(Partner partner) {
-    return partner.getIsProspect() ? "red" : "orange";
-  }
-
-  protected String getPinChar(PartnerAddress partnerAddress) {
-    if (partnerAddress.getIsDefaultAddr()) {
-      return "";
-    }
-
-    if (partnerAddress.getIsInvoicingAddr()) {
-      return I18n.get(ITranslation.PIN_CHAR_INVOICING);
-    }
-
-    if (partnerAddress.getIsDeliveryAddr()) {
-      return I18n.get(ITranslation.PIN_CHAR_DELIVERY);
-    }
-
-    return "";
   }
 }

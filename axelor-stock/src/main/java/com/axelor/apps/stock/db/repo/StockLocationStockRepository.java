@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,17 +14,34 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.stock.db.repo;
 
+import com.axelor.apps.base.db.BarcodeTypeConfig;
+import com.axelor.apps.base.service.BarcodeGeneratorService;
 import com.axelor.apps.stock.db.StockLocation;
 import com.axelor.apps.stock.service.StockLocationSaveService;
-import com.axelor.apps.stock.service.StockLocationService;
-import com.axelor.inject.Beans;
-import java.util.Map;
+import com.axelor.apps.stock.service.app.AppStockService;
+import com.axelor.meta.db.MetaFile;
+import com.axelor.studio.db.AppStock;
+import jakarta.inject.Inject;
 
 public class StockLocationStockRepository extends StockLocationRepository {
+
+  protected AppStockService appStockService;
+  protected BarcodeGeneratorService barcodeGeneratorService;
+  protected StockLocationSaveService stockLocationSaveService;
+
+  @Inject
+  public StockLocationStockRepository(
+      AppStockService appStockService,
+      BarcodeGeneratorService barcodeGeneratorService,
+      StockLocationSaveService stockLocationSaveService) {
+    this.appStockService = appStockService;
+    this.barcodeGeneratorService = barcodeGeneratorService;
+    this.stockLocationSaveService = stockLocationSaveService;
+  }
 
   /**
    * Override to remove incompatible stock locations in partners
@@ -32,25 +50,32 @@ public class StockLocationStockRepository extends StockLocationRepository {
    * @return
    */
   @Override
-  public StockLocation save(StockLocation entity) {
-    Beans.get(StockLocationSaveService.class).removeForbiddenDefaultStockLocation(entity);
-    return super.save(entity);
-  }
+  public StockLocation save(StockLocation stockLocation) {
+    stockLocationSaveService.removeForbiddenDefaultStockLocation(stockLocation);
 
-  @Override
-  public Map<String, Object> populate(Map<String, Object> json, Map<String, Object> context) {
-    Long stocklocationId = (Long) json.get("id");
-    StockLocation stockLocation = find(stocklocationId);
-
-    if (stockLocation.getTypeSelect() == StockLocationRepository.TYPE_VIRTUAL) {
-      return super.populate(json, context);
+    // Barcode generation
+    AppStock appStock = appStockService.getAppStock();
+    if (appStock != null
+        && appStock.getActivateStockLocationBarCodeGeneration()
+        && stockLocation.getBarCode() == null) {
+      boolean addPadding = false;
+      BarcodeTypeConfig barcodeTypeConfig = stockLocation.getBarcodeTypeConfig();
+      if (!appStock.getEditStockLocationBarcodeType()) {
+        barcodeTypeConfig = appStock.getStockLocationBarcodeTypeConfig();
+      }
+      MetaFile barcodeFile =
+          barcodeGeneratorService.createBarCode(
+              stockLocation.getId(),
+              "StockLocationBarCode%d.png",
+              stockLocation.getSerialNumber(),
+              barcodeTypeConfig,
+              addPadding);
+      if (barcodeFile != null) {
+        stockLocation.setBarCode(barcodeFile);
+      }
     }
 
-    json.put(
-        "stockLocationValue",
-        Beans.get(StockLocationService.class).getStockLocationValue(stockLocation));
-
-    return super.populate(json, context);
+    return super.save(stockLocation);
   }
 
   @Override
@@ -58,8 +83,8 @@ public class StockLocationStockRepository extends StockLocationRepository {
 
     StockLocation copy = super.copy(entity, deep);
 
-    copy.clearDetailsStockLocationLineList();
-    copy.clearStockLocationLineList();
+    copy.setBarCode(null);
+    copy.setSerialNumber(null);
     return copy;
   }
 }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,20 +14,22 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.administration;
 
+import com.axelor.app.AppSettings;
+import com.axelor.app.AvailableAppSettings;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.IndicatorGenerator;
 import com.axelor.apps.base.db.IndicatorGeneratorGrouping;
 import com.axelor.apps.base.db.repo.IndicatorGeneratorGroupingRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
-import com.axelor.apps.base.service.app.AppService;
-import com.axelor.apps.tool.file.CsvTool;
-import com.axelor.exception.AxelorException;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.i18n.I18n;
-import com.google.inject.Inject;
+import com.axelor.studio.app.service.AppService;
+import com.axelor.utils.helpers.file.CsvHelper;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -76,18 +79,18 @@ public class IndicatorGeneratorGroupingService {
   public void export(IndicatorGeneratorGrouping indicatorGeneratorGrouping) throws AxelorException {
 
     String log = "";
-    String dataExportDir = appService.getDataExportDir();
+    String dataExportDir = AppSettings.get().get(AvailableAppSettings.DATA_UPLOAD_DIR);
 
     if (indicatorGeneratorGrouping.getPath() == null
         || indicatorGeneratorGrouping.getPath().isEmpty()) {
 
-      log += "\n" + I18n.get(IExceptionMessage.INDICATOR_GENERATOR_GROUPING_1);
+      log += "\n" + I18n.get(BaseExceptionMessage.INDICATOR_GENERATOR_GROUPING_1);
     }
 
     if (indicatorGeneratorGrouping.getCode() == null
         || indicatorGeneratorGrouping.getCode().isEmpty()) {
 
-      log += "\n" + I18n.get(IExceptionMessage.INDICATOR_GENERATOR_GROUPING_2);
+      log += "\n" + I18n.get(BaseExceptionMessage.INDICATOR_GENERATOR_GROUPING_2);
     }
 
     List<String[]> resultList = new ArrayList<String[]>();
@@ -105,7 +108,7 @@ public class IndicatorGeneratorGroupingService {
     }
 
     try {
-      CsvTool.csvWriter(
+      CsvHelper.csvWriter(
           indicatorGeneratorGrouping.getPath() == null
               ? null
               : dataExportDir + indicatorGeneratorGrouping.getPath(),
@@ -114,7 +117,7 @@ public class IndicatorGeneratorGroupingService {
           null,
           resultList);
     } catch (IOException e) {
-      log += I18n.get(IExceptionMessage.INDICATOR_GENERATOR_GROUPING_3);
+      log += I18n.get(BaseExceptionMessage.INDICATOR_GENERATOR_GROUPING_3);
     }
 
     if (!log.isEmpty() && log.length() != 0) {

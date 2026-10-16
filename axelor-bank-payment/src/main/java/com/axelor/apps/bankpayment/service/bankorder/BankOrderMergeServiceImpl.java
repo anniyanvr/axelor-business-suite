@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.bankorder;
 
@@ -29,19 +30,19 @@ import com.axelor.apps.bankpayment.db.BankOrderLine;
 import com.axelor.apps.bankpayment.db.BankOrderLineOrigin;
 import com.axelor.apps.bankpayment.db.repo.BankOrderLineOriginRepository;
 import com.axelor.apps.bankpayment.db.repo.BankOrderRepository;
-import com.axelor.apps.bankpayment.exception.IExceptionMessage;
+import com.axelor.apps.bankpayment.exception.BankPaymentExceptionMessage;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Currency;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -60,7 +61,7 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
 
   protected BankOrderRepository bankOrderRepo;
   protected InvoicePaymentRepository invoicePaymentRepo;
-  protected BankOrderService bankOrderService;
+  protected BankOrderComputeService bankOrderComputeService;
   protected InvoiceRepository invoiceRepository;
   protected PaymentScheduleLineRepository paymentScheduleLineRepository;
 
@@ -68,13 +69,13 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
   public BankOrderMergeServiceImpl(
       BankOrderRepository bankOrderRepo,
       InvoicePaymentRepository invoicePaymentRepo,
-      BankOrderService bankOrderService,
+      BankOrderComputeService bankOrderComputeService,
       InvoiceRepository invoiceRepository,
       PaymentScheduleLineRepository paymentScheduleLineRepository) {
 
     this.bankOrderRepo = bankOrderRepo;
     this.invoicePaymentRepo = invoicePaymentRepo;
-    this.bankOrderService = bankOrderService;
+    this.bankOrderComputeService = bankOrderComputeService;
     this.invoiceRepository = invoiceRepository;
     this.paymentScheduleLineRepository = paymentScheduleLineRepository;
   }
@@ -85,7 +86,7 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
     if (bankOrders == null || bankOrders.size() <= 1) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          IExceptionMessage.BANK_ORDER_MERGE_AT_LEAST_TWO_BANK_ORDERS);
+          BankPaymentExceptionMessage.BANK_ORDER_MERGE_AT_LEAST_TWO_BANK_ORDERS);
     }
 
     this.checkSameElements(bankOrders);
@@ -98,8 +99,6 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
     bankOrder.setSenderReference(null);
     bankOrder.setBankOrderDate(
         Beans.get(AppBaseService.class).getTodayDate(bankOrder.getSenderCompany()));
-    bankOrder.setSignatoryUser(null);
-    bankOrder.setSignatoryEbicsUser(null);
 
     PaymentMode paymentMode = bankOrder.getPaymentMode();
 
@@ -130,7 +129,7 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
       consolidatePerPartner(bankOrder);
     }
 
-    bankOrderService.updateTotalAmounts(bankOrder);
+    bankOrderComputeService.updateTotalAmounts(bankOrder);
 
     return bankOrderRepo.save(bankOrder);
   }
@@ -151,47 +150,46 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
     for (BankOrder bankOrder : bankOrders) {
 
       int statusSelect = bankOrder.getStatusSelect();
-      if (statusSelect != BankOrderRepository.STATUS_DRAFT
-          && statusSelect != BankOrderRepository.STATUS_AWAITING_SIGNATURE) {
+      if (statusSelect != BankOrderRepository.STATUS_DRAFT) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_STATUS));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_STATUS));
       }
 
       if (statusSelect != refStatusSelect) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_STATUS));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_STATUS));
       }
 
       if (!bankOrder.getOrderTypeSelect().equals(orderTypeSelect)) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_ORDER_TYPE_SELECT));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_ORDER_TYPE_SELECT));
       }
 
       if (!bankOrder.getPaymentMode().equals(refPaymentMode)) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_PAYMENT_MODE));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_PAYMENT_MODE));
       }
 
       if (!bankOrder.getPartnerTypeSelect().equals(refPartnerTypeSelect)) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_PARTNER_TYPE_SELECT));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_PARTNER_TYPE_SELECT));
       }
 
       if (!bankOrder.getSenderCompany().equals(refSenderCompany)) {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_SENDER_COMPANY));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_SENDER_COMPANY));
       }
 
       if (bankOrder.getSenderBankDetails() == null && refSenderBankDetails != null
@@ -200,7 +198,7 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_SENDER_BANK_DETAILS));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_SENDER_BANK_DETAILS));
       }
 
       if (bankOrder.getIsMultiCurrency() != isMultiCurrency
@@ -209,7 +207,7 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
         throw new AxelorException(
             bankOrder,
             TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.BANK_ORDER_MERGE_SAME_CURRENCY));
+            I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_SAME_CURRENCY));
       }
     }
   }
@@ -323,14 +321,20 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
   }
 
   @Override
-  @Transactional(rollbackOn = {Exception.class})
   public BankOrder mergeFromInvoicePayments(Collection<InvoicePayment> invoicePayments)
       throws AxelorException {
+    return this.mergeFromInvoicePayments(invoicePayments, null);
+  }
+
+  @Override
+  @Transactional(rollbackOn = {Exception.class})
+  public BankOrder mergeFromInvoicePayments(
+      Collection<InvoicePayment> invoicePayments, LocalDate bankOrderDate) throws AxelorException {
 
     if (invoicePayments == null || invoicePayments.isEmpty()) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
+          I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
     }
 
     Collection<InvoicePayment> invoicePaymentsWithBankOrders = new ArrayList<>();
@@ -340,13 +344,18 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
       BankOrder bankOrder = invoicePayment.getBankOrder();
 
       if (bankOrder != null) {
+        if (bankOrder.getId() != null) {
+          bankOrder = bankOrderRepo.find(bankOrder.getId());
+        }
         invoicePaymentsWithBankOrders.add(invoicePayment);
         bankOrders.add(bankOrder);
       }
     }
 
     if (bankOrders.size() > 1) {
-      LocalDate bankOrderDate = bankOrders.iterator().next().getBankOrderDate();
+      if (bankOrderDate == null) {
+        bankOrderDate = bankOrders.iterator().next().getBankOrderDate();
+      }
       BankOrder mergedBankOrder = mergeBankOrders(bankOrders);
       mergedBankOrder.setBankOrderDate(bankOrderDate);
 
@@ -363,6 +372,6 @@ public class BankOrderMergeServiceImpl implements BankOrderMergeService {
 
     throw new AxelorException(
         TraceBackRepository.CATEGORY_INCONSISTENCY,
-        I18n.get(IExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
+        I18n.get(BankPaymentExceptionMessage.BANK_ORDER_MERGE_NO_BANK_ORDERS));
   }
 }

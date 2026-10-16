@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <domain-models xmlns="http://axelor.com/xml/ns/domain-models"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models http://axelor.com/xml/ns/domain-models/domain-models_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/domain-models https://axelor.com/xml/ns/domain-models/domain-models_8.2.xsd">
 
   <module name="crm" package="com.axelor.apps.crm.db"/>
 
-  <entity name="CrmBatch" lang="java">
+  <entity name="CrmBatch">
 
     <!-- HEADER -->
     <string name="code" title="Code" namecolumn="true" unique="true"/>
@@ -14,15 +14,13 @@
     <many-to-one name="company" ref="com.axelor.apps.base.db.Company" title="Company"/>
 
     <!-- OTHERS INFORMATION -->
+    <integer name="fetchLimit" title="Fetch limit" min="0"/>
     <string name="description" title="Description" large="true"/>
     <one-to-many name="batchList" ref="com.axelor.apps.base.db.Batch"
       mappedBy="crmBatch" title="Batchs"/>
 
     <integer name="durationTypeSelect" title="Duration type"
       selection="crm.eventReminder.duration.type.select"/>
-
-    <many-to-many name="targetConfigurationSet"
-      ref="com.axelor.apps.crm.db.TargetConfiguration" title="Targets configurations"/>
 
     <extra-code><![CDATA[
 

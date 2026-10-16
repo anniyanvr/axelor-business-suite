@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,46 +14,51 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service.invoice.generator;
 
 import com.axelor.apps.account.db.Account;
+import com.axelor.apps.account.db.AccountingSituation;
+import com.axelor.apps.account.db.FiscalPosition;
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.InvoiceLine;
-import com.axelor.apps.account.db.Tax;
 import com.axelor.apps.account.db.TaxEquiv;
 import com.axelor.apps.account.db.TaxLine;
 import com.axelor.apps.account.db.repo.InvoiceLineRepository;
-import com.axelor.apps.account.exception.IExceptionMessage;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
 import com.axelor.apps.account.service.AccountManagementAccountService;
+import com.axelor.apps.account.service.FiscalPositionAccountService;
+import com.axelor.apps.account.service.accountingsituation.AccountingSituationService;
 import com.axelor.apps.account.service.app.AppAccountService;
-import com.axelor.apps.account.service.invoice.InvoiceLineService;
 import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.invoice.generator.line.InvoiceLineManagement;
-import com.axelor.apps.base.db.Alarm;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Currency;
-import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.Unit;
 import com.axelor.apps.base.db.UnitConversion;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.db.repo.UnitConversionRepository;
+import com.axelor.apps.base.service.CurrencyScaleService;
 import com.axelor.apps.base.service.CurrencyService;
 import com.axelor.apps.base.service.ProductCompanyService;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.base.service.tax.AccountManagementService;
-import com.axelor.apps.base.service.tax.FiscalPositionService;
+import com.axelor.apps.base.service.tax.OrderLineTaxService;
+import com.axelor.apps.base.service.tax.TaxService;
 import com.axelor.db.JPA;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
+import com.google.common.collect.Sets;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import org.apache.commons.collections.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,9 +71,13 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
   protected UnitConversionRepository unitConversionRepo;
   protected AppBaseService appBaseService;
   protected AppAccountService appAccountService;
-  protected InvoiceLineService invoiceLineService;
+  protected OrderLineTaxService orderLineTaxService;
   protected AccountManagementAccountService accountManagementService;
   protected ProductCompanyService productCompanyService;
+  protected CurrencyScaleService currencyScaleService;
+  protected TaxService taxService;
+  protected AccountingSituationService accountingSituationService;
+  protected FiscalPositionAccountService fiscalPositionAccountService;
 
   protected Invoice invoice;
   protected Product product;
@@ -78,7 +88,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
   protected String description;
   protected BigDecimal qty;
   protected Unit unit;
-  protected TaxLine taxLine;
+  protected Set<TaxLine> taxLineSet;
   protected int sequence;
   protected LocalDate today;
   protected boolean isTaxInvoice;
@@ -87,6 +97,9 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
   protected BigDecimal exTaxTotal;
   protected BigDecimal inTaxTotal;
   protected Integer typeSelect = 0;
+  protected int currencyScale;
+  protected int companyCurrencyScale;
+  protected BigDecimal coefficient;
 
   public static final int DEFAULT_SEQUENCE = 0;
 
@@ -98,9 +111,14 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     this.unitConversionRepo = Beans.get(UnitConversionRepository.class);
     this.appBaseService = Beans.get(AppBaseService.class);
     this.appAccountService = Beans.get(AppAccountService.class);
-    this.invoiceLineService = Beans.get(InvoiceLineService.class);
+    this.orderLineTaxService = Beans.get(OrderLineTaxService.class);
     this.accountManagementService = Beans.get(AccountManagementAccountService.class);
     this.productCompanyService = Beans.get(ProductCompanyService.class);
+    this.currencyScaleService = Beans.get(CurrencyScaleService.class);
+    this.taxService = Beans.get(TaxService.class);
+    this.currencyService = Beans.get(CurrencyService.class);
+    this.accountingSituationService = Beans.get(AccountingSituationService.class);
+    this.fiscalPositionAccountService = Beans.get(FiscalPositionAccountService.class);
   }
 
   protected InvoiceLineGenerator(
@@ -118,12 +136,13 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     this.product = product;
     this.productName = productName;
     this.description = description;
-    this.qty = qty.setScale(appBaseService.getNbDecimalDigitForQty(), RoundingMode.HALF_UP);
+    this.qty = qty;
     this.unit = unit;
     this.sequence = sequence;
     this.isTaxInvoice = isTaxInvoice;
-    this.today = Beans.get(AppAccountService.class).getTodayDate(invoice.getCompany());
-    this.currencyService = new CurrencyService(this.today);
+    this.today = appAccountService.getTodayDate(invoice.getCompany());
+    this.currencyScale = this.currencyScaleService.getScale(invoice);
+    this.companyCurrencyScale = this.currencyScaleService.getCompanyScale(invoice);
   }
 
   protected InvoiceLineGenerator(
@@ -136,7 +155,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
       String description,
       BigDecimal qty,
       Unit unit,
-      TaxLine taxLine,
+      Set<TaxLine> taxLineSet,
       int sequence,
       BigDecimal discountAmount,
       int discountTypeSelect,
@@ -149,11 +168,49 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     this.price = price;
     this.inTaxPrice = inTaxPrice;
     this.priceDiscounted = priceDiscounted;
-    this.taxLine = taxLine;
+    this.taxLineSet = taxLineSet;
     this.discountTypeSelect = discountTypeSelect;
     this.discountAmount = discountAmount;
-    this.exTaxTotal = exTaxTotal;
-    this.inTaxTotal = inTaxTotal;
+    this.exTaxTotal = this.currencyScaleService.getScaledValue(invoice, exTaxTotal);
+    this.inTaxTotal = this.currencyScaleService.getScaledValue(invoice, inTaxTotal);
+  }
+
+  protected InvoiceLineGenerator(
+      Invoice invoice,
+      Product product,
+      String productName,
+      BigDecimal price,
+      BigDecimal inTaxPrice,
+      BigDecimal priceDiscounted,
+      String description,
+      BigDecimal qty,
+      Unit unit,
+      Set<TaxLine> taxLineSet,
+      int sequence,
+      BigDecimal discountAmount,
+      int discountTypeSelect,
+      BigDecimal exTaxTotal,
+      BigDecimal inTaxTotal,
+      boolean isTaxInvoice,
+      int typeSelect) {
+    this(
+        invoice,
+        product,
+        productName,
+        price,
+        inTaxPrice,
+        priceDiscounted,
+        description,
+        qty,
+        unit,
+        taxLineSet,
+        sequence,
+        discountAmount,
+        discountTypeSelect,
+        exTaxTotal,
+        inTaxTotal,
+        isTaxInvoice);
+    this.typeSelect = typeSelect;
   }
 
   public Invoice getInvoice() {
@@ -167,6 +224,56 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
   @Override
   public abstract List<InvoiceLine> creates() throws AxelorException;
 
+  public void setProductAccount(InvoiceLine invoiceLine, Company company, boolean isPurchase)
+      throws AxelorException {
+    if (product != null) {
+      invoiceLine.setProductCode((String) productCompanyService.get(product, "code", company));
+      Account account =
+          accountManagementService.getProductAccount(
+              product,
+              company,
+              invoice.getFiscalPosition(),
+              isPurchase,
+              invoiceLine.getFixedAssets());
+      invoiceLine.setAccount(account);
+    } else if (invoice.getPartner() != null) {
+      AccountingSituation accountingSituation =
+          accountingSituationService.getAccountingSituation(invoice.getPartner(), company);
+      if (accountingSituation != null) {
+        Account account =
+            isPurchase
+                ? accountingSituation.getDefaultExpenseAccount()
+                : accountingSituation.getDefaultIncomeAccount();
+        FiscalPosition fiscalPosition = invoice.getFiscalPosition();
+        if (account != null && fiscalPosition != null) {
+          account = fiscalPositionAccountService.getAccount(fiscalPosition, account);
+        }
+        invoiceLine.setAccount(account);
+        if (account != null && CollectionUtils.isNotEmpty(account.getDefaultTaxSet())) {
+          taxLineSet = taxService.getTaxLineSet(account.getDefaultTaxSet(), today);
+          if (fiscalPosition != null && CollectionUtils.isNotEmpty(taxLineSet)) {
+            TaxEquiv taxEquiv =
+                fiscalPositionAccountService.getTaxEquivFromOrToTaxSet(fiscalPosition, taxLineSet);
+            if (taxEquiv != null) {
+              taxLineSet = taxService.getTaxLineSet(taxEquiv.getToTaxSet(), today);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  public void setTaxEquiv(InvoiceLine invoiceLine) {
+    TaxEquiv taxEquiv =
+        fiscalPositionAccountService.getTaxEquivFromOrToTaxSet(
+            invoice.getFiscalPosition(), taxLineSet);
+
+    invoiceLine.setTaxEquiv(taxEquiv);
+    invoiceLine.setVatExemptionReason(
+        orderLineTaxService.resolveVatExemptionReason(
+            invoice.getFiscalPosition(), taxEquiv, invoice.getPartner()));
+  }
+
   /**
    * @return
    * @throws AxelorException
@@ -175,7 +282,6 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
 
     InvoiceLine invoiceLine = new InvoiceLine();
     boolean isPurchase = InvoiceToolService.isPurchase(invoice);
-    Partner partner = invoice.getPartner();
     Company company = invoice.getCompany();
 
     invoiceLine.setInvoice(invoice);
@@ -183,57 +289,47 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     invoiceLine.setProduct(product);
 
     invoiceLine.setProductName(productName);
-    if (product != null) {
-      invoiceLine.setProductCode((String) productCompanyService.get(product, "code", company));
-      Account account =
-          accountManagementService.getProductAccount(
-              product,
-              company,
-              partner.getFiscalPosition(),
-              isPurchase,
-              invoiceLine.getFixedAssets());
-      invoiceLine.setAccount(account);
-    }
+
+    setProductAccount(invoiceLine, company, isPurchase);
 
     invoiceLine.setDescription(description);
     invoiceLine.setPrice(price);
     invoiceLine.setInTaxPrice(inTaxPrice);
 
     invoiceLine.setPriceDiscounted(priceDiscounted);
-    invoiceLine.setQty(qty);
     invoiceLine.setUnit(unit);
+
+    if (coefficient == null) {
+      invoiceLine.setCoefficient(BigDecimal.ONE);
+    } else {
+      invoiceLine.setCoefficient(coefficient);
+    }
 
     invoiceLine.setTypeSelect(typeSelect);
 
-    if (taxLine == null) {
+    if (CollectionUtils.isEmpty(taxLineSet)) {
       this.determineTaxLine();
     }
 
-    if (product != null) {
-      Tax tax =
-          Beans.get(AccountManagementService.class)
-              .getProductTax(product, company, null, isPurchase);
-      TaxEquiv taxEquiv =
-          Beans.get(FiscalPositionService.class).getTaxEquiv(partner.getFiscalPosition(), tax);
+    setTaxEquiv(invoiceLine);
 
-      invoiceLine.setTaxEquiv(taxEquiv);
-    }
-
-    invoiceLine.setTaxLine(taxLine);
-
-    if (taxLine != null) {
-      invoiceLine.setTaxRate(taxLine.getValue());
-      invoiceLine.setTaxCode(taxLine.getTax().getCode());
+    if (CollectionUtils.isNotEmpty(taxLineSet)) {
+      invoiceLine.setTaxLineSet(Sets.newHashSet(taxLineSet));
+      invoiceLine.setTaxRate(taxService.getTotalTaxRateInPercentage(taxLineSet));
+      invoiceLine.setTaxCode(taxService.computeTaxCode(taxLineSet));
+    } else {
+      invoiceLine.setTaxLineSet(new HashSet<>());
     }
 
     if ((exTaxTotal == null || inTaxTotal == null)) {
       this.computeTotal();
     }
-
+    invoiceLine.setQty(
+        qty.setScale(appBaseService.getNbDecimalDigitForQty(), RoundingMode.HALF_UP));
     invoiceLine.setExTaxTotal(exTaxTotal);
     invoiceLine.setInTaxTotal(inTaxTotal);
 
-    this.computeCompanyTotal(invoiceLine);
+    this.computeCompanyTotal(invoiceLine, today);
 
     invoiceLine.setSequence(sequence);
 
@@ -248,15 +344,11 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     if (product != null) {
 
       Company company = invoice.getCompany();
-      Partner partner = invoice.getPartner();
+      FiscalPosition fiscalPosition = invoice.getFiscalPosition();
 
-      taxLine =
-          accountManagementService.getTaxLine(
-              today,
-              product,
-              company,
-              partner.getFiscalPosition(),
-              InvoiceToolService.isPurchase(invoice));
+      taxLineSet =
+          accountManagementService.getTaxLineSet(
+              today, product, company, fiscalPosition, InvoiceToolService.isPurchase(invoice));
     }
   }
 
@@ -267,20 +359,27 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     }
 
     BigDecimal taxRate = BigDecimal.ZERO;
-    if (taxLine != null) {
-      taxRate = taxLine.getValue();
+    if (CollectionUtils.isNotEmpty(taxLineSet)) {
+      taxRate = taxService.getTotalTaxRate(taxLineSet);
     }
 
     if (!invoice.getInAti()) {
-      exTaxTotal = computeAmount(this.qty, this.priceDiscounted, 2);
-      inTaxTotal = exTaxTotal.add(exTaxTotal.multiply(taxRate)).setScale(2, RoundingMode.HALF_UP);
+      exTaxTotal =
+          computeAmount(this.qty, this.priceDiscounted, this.currencyScale, this.coefficient);
+      inTaxTotal =
+          exTaxTotal
+              .add(exTaxTotal.multiply(taxRate))
+              .setScale(this.currencyScale, RoundingMode.HALF_UP);
     } else {
-      inTaxTotal = computeAmount(this.qty, this.priceDiscounted, 2);
-      exTaxTotal = inTaxTotal.divide(taxRate.add(BigDecimal.ONE), 2, BigDecimal.ROUND_HALF_UP);
+      inTaxTotal =
+          computeAmount(this.qty, this.priceDiscounted, this.currencyScale, this.coefficient);
+      exTaxTotal =
+          inTaxTotal.divide(
+              taxRate.add(BigDecimal.ONE), this.currencyScale, BigDecimal.ROUND_HALF_UP);
     }
   }
 
-  public void computeCompanyTotal(InvoiceLine invoiceLine) throws AxelorException {
+  public void computeCompanyTotal(InvoiceLine invoiceLine, LocalDate date) throws AxelorException {
 
     if (typeSelect == InvoiceLineRepository.TYPE_TITLE) {
       return;
@@ -293,21 +392,21 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     if (companyCurrency == null) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.INVOICE_LINE_GENERATOR_2),
+          I18n.get(AccountExceptionMessage.INVOICE_LINE_GENERATOR_2),
           company.getName());
     }
 
     invoiceLine.setCompanyExTaxTotal(
         currencyService
             .getAmountCurrencyConvertedAtDate(
-                invoice.getCurrency(), companyCurrency, exTaxTotal, today)
-            .setScale(AppBaseService.DEFAULT_NB_DECIMAL_DIGITS, RoundingMode.HALF_UP));
+                invoice.getCurrency(), companyCurrency, exTaxTotal, date)
+            .setScale(this.companyCurrencyScale, RoundingMode.HALF_UP));
 
     invoiceLine.setCompanyInTaxTotal(
         currencyService
             .getAmountCurrencyConvertedAtDate(
-                invoice.getCurrency(), companyCurrency, inTaxTotal, today)
-            .setScale(AppBaseService.DEFAULT_NB_DECIMAL_DIGITS, RoundingMode.HALF_UP));
+                invoice.getCurrency(), companyCurrency, inTaxTotal, date)
+            .setScale(this.companyCurrencyScale, RoundingMode.HALF_UP));
   }
 
   /**
@@ -319,7 +418,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
    */
   protected InvoiceLine refundInvoiceLine(InvoiceLine invoiceLine, boolean daysQty) {
 
-    LOG.debug("Remboursement d'une ligne de facture (quantité = nb jour ? {}).", daysQty);
+    LOG.debug("Reimbursement of an invoice line (quantity = number of day ? {}).", daysQty);
 
     InvoiceLine refundInvoiceLine = JPA.copy(invoiceLine, true);
 
@@ -329,13 +428,17 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
 
     refundInvoiceLine.setQty(quantity.negate());
 
-    LOG.debug("Quantité remboursée : {}", refundInvoiceLine.getQty());
+    LOG.debug("Quantity reimbursed : {}", refundInvoiceLine.getQty());
 
     refundInvoiceLine.setExTaxTotal(
-        computeAmount(refundInvoiceLine.getQty(), refundInvoiceLine.getPrice()));
+        computeAmount(
+            refundInvoiceLine.getQty(),
+            refundInvoiceLine.getPrice(),
+            this.currencyScale,
+            this.coefficient));
 
     LOG.debug(
-        "Remboursement de la ligne de facture {} => montant HT: {}",
+        "Reimbursement of the invoice line {} => amount W.T : {}",
         new Object[] {invoiceLine.getId(), refundInvoiceLine.getExTaxTotal()});
 
     return refundInvoiceLine;
@@ -346,9 +449,11 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     InvoiceLine substract = JPA.copy(invoiceLine1, false);
 
     substract.setQty(invoiceLine1.getQty().add(invoiceLine2.getQty()));
-    substract.setExTaxTotal(computeAmount(substract.getQty(), substract.getPrice()));
+    substract.setExTaxTotal(
+        computeAmount(
+            substract.getQty(), substract.getPrice(), this.currencyScale, this.coefficient));
 
-    LOG.debug("Soustraction de deux lignes de factures: {}", substract);
+    LOG.debug("Subtraction of two invoice lines: {}", substract);
 
     return substract;
   }
@@ -366,7 +471,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     BigDecimal convertPrice = convert(startUnit, endUnit, price);
 
     LOG.debug(
-        "Conversion du prix {} {} : {} {}", new Object[] {price, startUnit, convertPrice, endUnit});
+        "Price conversion {} {} : {} {}", new Object[] {price, startUnit, convertPrice, endUnit});
 
     return convertPrice;
   }
@@ -375,7 +480,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
    * Récupérer la bonne unité.
    *
    * @param unit Unité de base.
-   * @param unitDisplay Unité à afficher.
+   * @param displayUnit Unité à afficher.
    * @return L'unité à utiliser.
    */
   protected Unit unit(Unit unit, Unit displayUnit) {
@@ -387,8 +492,7 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
     }
 
     LOG.debug(
-        "Obtention de l'unité : Unité {}, Unité affichée {} : {}",
-        new Object[] {unit, displayUnit, resUnit});
+        "Get unit : Unit {}, Unit displayed {} : {}", new Object[] {unit, displayUnit, resUnit});
 
     return resUnit;
   }
@@ -431,15 +535,6 @@ public abstract class InvoiceLineGenerator extends InvoiceLineManagement {
       return unitConversion.getCoef();
     } else {
       return BigDecimal.ONE;
-    }
-  }
-
-  protected void addAlarm(Alarm alarm, Partner partner) {
-
-    if (alarm != null) {
-
-      alarm.setInvoice(invoice);
-      alarm.setPartner(partner);
     }
   }
 }

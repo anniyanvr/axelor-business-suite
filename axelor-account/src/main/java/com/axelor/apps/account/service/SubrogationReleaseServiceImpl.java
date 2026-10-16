@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,11 +14,12 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service;
 
-import com.axelor.apps.ReportFactory;
+import com.axelor.app.AppSettings;
+import com.axelor.app.AvailableAppSettings;
 import com.axelor.apps.account.db.Account;
 import com.axelor.apps.account.db.AccountConfig;
 import com.axelor.apps.account.db.Invoice;
@@ -28,27 +30,27 @@ import com.axelor.apps.account.db.SubrogationRelease;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.db.repo.MoveRepository;
 import com.axelor.apps.account.db.repo.SubrogationReleaseRepository;
-import com.axelor.apps.account.exception.IExceptionMessage;
-import com.axelor.apps.account.report.IReport;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
 import com.axelor.apps.account.service.config.AccountConfigService;
 import com.axelor.apps.account.service.invoice.InvoiceToolService;
-import com.axelor.apps.account.service.move.MoveService;
+import com.axelor.apps.account.service.move.MoveCreateService;
+import com.axelor.apps.account.service.move.MoveValidateService;
+import com.axelor.apps.account.service.moveline.MoveLineCreateService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Sequence;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.administration.SequenceService;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.report.engine.ReportSettings;
-import com.axelor.apps.tool.file.CsvTool;
 import com.axelor.db.JPA;
 import com.axelor.db.Query;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.MetaFiles;
+import com.axelor.utils.helpers.file.CsvHelper;
 import com.google.common.base.Strings;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -66,13 +68,29 @@ import java.util.stream.Collectors;
 public class SubrogationReleaseServiceImpl implements SubrogationReleaseService {
 
   protected AppBaseService appBaseService;
+  protected AccountConfigService accountConfigService;
   protected InvoiceRepository invoiceRepository;
+  protected MoveCreateService moveCreateService;
+  protected MoveValidateService moveValidateService;
+  protected MoveRepository moveRepository;
+  protected MoveLineCreateService moveLineCreateService;
 
   @Inject
   public SubrogationReleaseServiceImpl(
-      AppBaseService appBaseService, InvoiceRepository invoiceRepository) {
+      AppBaseService appBaseService,
+      AccountConfigService accountConfigService,
+      InvoiceRepository invoiceRepository,
+      MoveCreateService moveCreateService,
+      MoveValidateService moveValidateService,
+      MoveLineCreateService moveLineCreateService,
+      MoveRepository moveRepository) {
     this.appBaseService = appBaseService;
+    this.accountConfigService = accountConfigService;
     this.invoiceRepository = invoiceRepository;
+    this.moveValidateService = moveValidateService;
+    this.moveCreateService = moveCreateService;
+    this.moveRepository = moveRepository;
+    this.moveLineCreateService = moveLineCreateService;
   }
 
   @Override
@@ -82,6 +100,7 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
             .all()
             .filter(
                 "self.company = :company AND self.partner.factorizedCustomer = TRUE "
+                    + "AND self.operationTypeSelect in (:clientRefund, :clientSale) "
                     + "AND self.statusSelect = :invoiceStatusVentilated "
                     + "AND self.id not in ("
                     + "		select Invoices.id "
@@ -98,6 +117,8 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
             .order("dueDate")
             .order("invoiceId");
     query.bind("company", company);
+    query.bind("clientRefund", InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND);
+    query.bind("clientSale", InvoiceRepository.OPERATION_TYPE_CLIENT_SALE);
     query.bind("invoiceStatusVentilated", InvoiceRepository.STATUS_VENTILATED);
     query.bind(
         "subrogationReleaseStatusTransmitted", SubrogationReleaseRepository.STATUS_TRANSMITTED);
@@ -112,12 +133,17 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
   public void transmitRelease(SubrogationRelease subrogationRelease) throws AxelorException {
     SequenceService sequenceService = Beans.get(SequenceService.class);
     String sequenceNumber =
-        sequenceService.getSequenceNumber("subrogationRelease", subrogationRelease.getCompany());
+        sequenceService.getSequenceNumber(
+            "subrogationRelease",
+            subrogationRelease.getCompany(),
+            SubrogationRelease.class,
+            "sequenceNumber",
+            subrogationRelease);
     if (Strings.isNullOrEmpty(sequenceNumber)) {
       throw new AxelorException(
           Sequence.class,
           TraceBackRepository.CATEGORY_NO_VALUE,
-          I18n.get(IExceptionMessage.SUBROGATION_RELEASE_MISSING_SEQUENCE),
+          I18n.get(AccountExceptionMessage.SUBROGATION_RELEASE_MISSING_SEQUENCE),
           subrogationRelease.getCompany().getName());
     }
     this.checkIfAnOtherSubrogationAlreadyExist(subrogationRelease);
@@ -137,7 +163,7 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
                 "SELECT Invoice.invoiceId "
                     + " FROM SubrogationRelease SubrogationRelease "
                     + " LEFT JOIN Invoice Invoice on  Invoice member of  SubrogationRelease.invoiceSet "
-                    + " LEFT JOIN SubrogationRelease SubrogationRelease2 on Invoice member of  SubrogationRelease2.invoiceSet "
+                    + " LEFT JOIN Invoice.subrogationRelease SubrogationRelease2 "
                     + " WHERE SubrogationRelease.id = :subroID "
                     + " AND SubrogationRelease2.id != :subroID"
                     + " AND SubrogationRelease2.statusSelect IN (:statusTransmitted ,:statusAccounted,:statusCleared )")
@@ -150,32 +176,16 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
       throw new AxelorException(
           SubrogationRelease.class,
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.SUBROGATION_RELEASE_SUBROGATION_ALREADY_EXIST_FOR_INVOICES),
+          I18n.get(
+              AccountExceptionMessage.SUBROGATION_RELEASE_SUBROGATION_ALREADY_EXIST_FOR_INVOICES),
           invoicesIDList);
     }
   }
 
   @Override
-  public String printToPDF(SubrogationRelease subrogationRelease, String name)
-      throws AxelorException {
-    ReportSettings reportSettings = ReportFactory.createReport(IReport.SUBROGATION_RELEASE, name);
-    reportSettings.addParam("SubrogationReleaseId", subrogationRelease.getId());
-    reportSettings.addParam("Locale", ReportSettings.getPrintingLocale(null));
-    reportSettings.addParam(
-        "Timezone",
-        subrogationRelease.getCompany() != null
-            ? subrogationRelease.getCompany().getTimezone()
-            : null);
-    reportSettings.addFormat("pdf");
-    reportSettings.toAttach(subrogationRelease);
-    reportSettings.generate();
-    return reportSettings.getFileLink();
-  }
-
-  @Override
   public String exportToCSV(SubrogationRelease subrogationRelease)
       throws AxelorException, IOException {
-    String dataExportDir = appBaseService.getDataExportDir();
+    String dataExportDir = AppSettings.get().get(AvailableAppSettings.DATA_UPLOAD_DIR);
     List<String[]> allMoveLineData = new ArrayList<>();
 
     Comparator<Invoice> byInvoiceDate =
@@ -201,11 +211,10 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
       items[2] = invoice.getInvoiceDate().toString();
       items[3] = invoice.getDueDate().toString();
       items[4] = inTaxTotal.toString();
-      items[5] = invoice.getCurrency().getCode();
+      items[5] = invoice.getCurrency().getCodeISO();
       allMoveLineData.add(items);
     }
 
-    AccountConfigService accountConfigService = Beans.get(AccountConfigService.class);
     String filePath =
         accountConfigService.getAccountConfig(subrogationRelease.getCompany()).getExportPath();
     filePath = filePath == null ? dataExportDir : dataExportDir + filePath;
@@ -216,7 +225,7 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
             "%s %s.csv", I18n.get("Subrogation release"), subrogationRelease.getSequenceNumber());
     Files.createDirectories(Paths.get(filePath));
     Path path = Paths.get(filePath, fileName);
-    CsvTool.csvWriter(filePath, fileName, ';', null, allMoveLineData);
+    CsvHelper.csvWriter(filePath, fileName, ';', null, allMoveLineData);
 
     try (InputStream is = new FileInputStream(path.toFile())) {
       Beans.get(MetaFiles.class).attach(is, fileName, subrogationRelease);
@@ -229,10 +238,6 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
   @Transactional(rollbackOn = {Exception.class})
   public void enterReleaseInTheAccounts(SubrogationRelease subrogationRelease)
       throws AxelorException {
-    MoveService moveService = Beans.get(MoveService.class);
-    MoveRepository moveRepository = Beans.get(MoveRepository.class);
-    AccountConfigService accountConfigService = Beans.get(AccountConfigService.class);
-    AppBaseService appBaseService = Beans.get(AppBaseService.class);
 
     Company company = subrogationRelease.getCompany();
     AccountConfig accountConfig = accountConfigService.getAccountConfig(company);
@@ -253,56 +258,57 @@ public class SubrogationReleaseServiceImpl implements SubrogationReleaseService 
         isRefund = true;
       }
 
+      String origin = subrogationRelease.getSequenceNumber();
+      String description = invoice.getInvoiceId();
       LocalDate date = subrogationRelease.getAccountingDate();
       Move move =
-          moveService
-              .getMoveCreateService()
-              .createMove(
-                  journal,
-                  company,
-                  company.getCurrency(),
-                  invoice.getPartner(),
-                  date,
-                  null,
-                  MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
-                  MoveRepository.FUNCTIONAL_ORIGIN_PAYMENT);
+          moveCreateService.createMove(
+              journal,
+              company,
+              company.getCurrency(),
+              invoice.getPartner(),
+              date,
+              date,
+              null,
+              invoice.getFiscalPosition(),
+              MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
+              MoveRepository.FUNCTIONAL_ORIGIN_PAYMENT,
+              origin,
+              description,
+              invoice.getCompanyBankDetails());
       MoveLine creditMoveLine, debitMoveLine;
 
       debitMoveLine =
-          moveService
-              .getMoveLineService()
-              .createMoveLine(
-                  move,
-                  invoice.getPartner(),
-                  factorDebitAccount,
-                  invoice.getCompanyInTaxTotalRemaining(),
-                  !isRefund,
-                  date,
-                  null,
-                  1,
-                  subrogationRelease.getSequenceNumber(),
-                  invoice.getInvoiceId());
+          moveLineCreateService.createMoveLine(
+              move,
+              invoice.getPartner(),
+              factorDebitAccount,
+              invoice.getCompanyInTaxTotalRemaining(),
+              !isRefund,
+              date,
+              null,
+              1,
+              origin,
+              description);
 
       creditMoveLine =
-          moveService
-              .getMoveLineService()
-              .createMoveLine(
-                  move,
-                  invoice.getPartner(),
-                  factorCreditAccount,
-                  invoice.getCompanyInTaxTotalRemaining(),
-                  isRefund,
-                  date,
-                  null,
-                  2,
-                  subrogationRelease.getSequenceNumber(),
-                  invoice.getInvoiceId());
+          moveLineCreateService.createMoveLine(
+              move,
+              invoice.getPartner(),
+              factorCreditAccount,
+              invoice.getCompanyInTaxTotalRemaining(),
+              isRefund,
+              date,
+              null,
+              2,
+              origin,
+              description);
 
       move.addMoveLineListItem(debitMoveLine);
       move.addMoveLineListItem(creditMoveLine);
 
       move = moveRepository.save(move);
-      moveService.getMoveValidateService().validate(move);
+      moveValidateService.accounting(move);
 
       invoice.setSubrogationRelease(subrogationRelease);
       invoice.setSubrogationReleaseMove(move);

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <object-views xmlns="http://axelor.com/xml/ns/object-views"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/object-views http://axelor.com/xml/ns/object-views/object-views_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/object-views https://axelor.com/xml/ns/object-views/object-views_8.2.xsd">
 
   <grid name="product-category-grid" title="Product categories"
     model="com.axelor.apps.base.db.ProductCategory" orderBy="name">
@@ -23,9 +23,13 @@
       <field name="name"/>
       <field name="code" x-bind="{{code|unaccent|uppercase}}"/>
       <field name="parentProductCategory" form-view="product-category-form"
-        grid-view="product-category-grid"/>
+        grid-view="product-category-grid"
+        onSelect="action-method-product-category-filter-parent-category"/>
       <field name="sequence" onSelect="action-attrs-product-category-form-set-sequence-domain"/>
       <field name="maxDiscount" onChange="action-group-product-category-max-discount-onchange"/>
+      <field name="growthCoef"/>
+      <field name="excludeFromMrp" if-module="axelor-supplychain"
+        if="__config__.app.isApp('supplychain')"/>
     </panel>
     <panel-dashlet name="salesTurnoverPanel" title="Sales Turnover"
       action="dashlet.category.sales.turnover.per.month" colSpan="12" height="350"
@@ -37,7 +41,8 @@
     <column name="code" type="string"/>
 
     <node model="com.axelor.apps.base.db.ProductCategory"
-      domain="self.parentProductCategory is null" onClick="action-view-product-category-from-tree">
+      domain="self.parentProductCategory is null" draggable="true"
+      onClick="action-view-product-category-from-tree">
       <field as="name" name="name"/>
       <field as="code" name="code"/>
     </node>
@@ -75,8 +80,7 @@
 
   <action-attrs name="action-attrs-product-category-form-set-hidden">
     <attribute name="hidden" for="sequence"
-      expr="eval: __config__.app.getApp('base').getProductSequenceTypeSelect() != 'Per product category'
-			|| id &amp;&amp; __repo__(ProductCategory).all().filter('self.parentProductCategory.id = ?', id).count() > 0"/>
+      expr="eval: __config__.app.getApp('base')?.getProductSequenceTypeSelect() != 'Per product category'"/>
   </action-attrs>
 
   <action-attrs name="action-attrs-product-category-form-set-sequence-domain">
@@ -92,6 +96,11 @@
   <action-method name="action-method-product-category-show-existing-discounts">
     <call class="com.axelor.apps.base.web.ProductCategoryController"
       method="showExistingDiscounts"/>
+  </action-method>
+
+  <action-method name="action-method-product-category-filter-parent-category">
+    <call class="com.axelor.apps.base.web.ProductCategoryController"
+      method="filterParentCategory"/>
   </action-method>
 
 </object-views>

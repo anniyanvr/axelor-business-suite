@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,71 +14,46 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service.payment.invoice.payment;
 
 import com.axelor.apps.account.db.Account;
-import com.axelor.apps.account.db.AccountConfig;
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.InvoicePayment;
-import com.axelor.apps.account.db.Journal;
-import com.axelor.apps.account.db.Move;
-import com.axelor.apps.account.db.MoveLine;
-import com.axelor.apps.account.db.PaymentMode;
-import com.axelor.apps.account.db.Reconcile;
 import com.axelor.apps.account.db.repo.InvoicePaymentRepository;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
-import com.axelor.apps.account.db.repo.MoveRepository;
-import com.axelor.apps.account.db.repo.PaymentModeRepository;
-import com.axelor.apps.account.service.AccountingSituationService;
-import com.axelor.apps.account.service.ReconcileService;
-import com.axelor.apps.account.service.config.AccountConfigService;
-import com.axelor.apps.account.service.move.MoveLineService;
-import com.axelor.apps.account.service.move.MoveService;
-import com.axelor.apps.account.service.payment.PaymentModeService;
-import com.axelor.apps.base.db.BankDetails;
-import com.axelor.apps.base.db.Company;
-import com.axelor.apps.base.db.Partner;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
+import com.axelor.apps.account.service.invoice.InvoiceToolService;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.service.exception.TraceBackService;
+import com.axelor.common.ObjectUtils;
+import com.axelor.db.JPA;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
+import com.google.inject.servlet.RequestScoped;
+import jakarta.inject.Inject;
+import java.util.List;
 
+@RequestScoped
 public class InvoicePaymentValidateServiceImpl implements InvoicePaymentValidateService {
 
-  protected PaymentModeService paymentModeService;
-  protected MoveService moveService;
-  protected MoveLineService moveLineService;
-  protected AccountConfigService accountConfigService;
   protected InvoicePaymentRepository invoicePaymentRepository;
-  protected ReconcileService reconcileService;
   protected InvoicePaymentToolService invoicePaymentToolService;
+  protected InvoicePaymentMoveCreateService invoicePaymentMoveCreateService;
+  protected int jpaLimit = 10;
 
   @Inject
   public InvoicePaymentValidateServiceImpl(
-      PaymentModeService paymentModeService,
-      MoveService moveService,
-      MoveLineService moveLineService,
-      AccountConfigService accountConfigService,
       InvoicePaymentRepository invoicePaymentRepository,
-      ReconcileService reconcileService,
-      InvoicePaymentToolService invoicePaymentToolService) {
+      InvoicePaymentToolService invoicePaymentToolService,
+      InvoicePaymentMoveCreateService invoicePaymentMoveCreateService) {
 
-    this.paymentModeService = paymentModeService;
-    this.moveService = moveService;
-    this.moveLineService = moveLineService;
-    this.accountConfigService = accountConfigService;
     this.invoicePaymentRepository = invoicePaymentRepository;
-    this.reconcileService = reconcileService;
     this.invoicePaymentToolService = invoicePaymentToolService;
+    this.invoicePaymentMoveCreateService = invoicePaymentMoveCreateService;
   }
 
   /**
@@ -88,32 +64,53 @@ public class InvoicePaymentValidateServiceImpl implements InvoicePaymentValidate
    *
    * @param invoicePayment An invoice payment
    * @throws AxelorException
-   * @throws DatatypeConfigurationException
-   * @throws IOException
-   * @throws JAXBException
    */
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public void validate(InvoicePayment invoicePayment, boolean force)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+  public void validate(InvoicePayment invoicePayment, boolean force) throws AxelorException {
 
     Invoice invoice = invoicePayment.getInvoice();
     validatePartnerAccount(invoice);
+    invoice.setNextDueDate(Beans.get(InvoiceToolService.class).getNextDueDate(invoice));
 
     if (!force && invoicePayment.getStatusSelect() != InvoicePaymentRepository.STATUS_DRAFT) {
       return;
     }
 
     setInvoicePaymentStatus(invoicePayment);
-    createInvoicePaymentMove(invoicePayment);
+    invoicePaymentMoveCreateService.createInvoicePaymentMove(invoicePayment);
+    invoicePaymentToolService.updateAmountPaid(invoice);
 
-    invoicePaymentToolService.updateAmountPaid(invoicePayment.getInvoice());
-    if (invoicePayment.getInvoice() != null
-        && invoicePayment.getInvoice().getOperationSubTypeSelect()
-            == InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE) {
+    if (invoice != null
+        && invoice.getOperationSubTypeSelect() == InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE
+        && !InvoiceToolService.isRefund(invoice)) {
       invoicePayment.setTypeSelect(InvoicePaymentRepository.TYPE_ADVANCEPAYMENT);
     }
     invoicePaymentRepository.save(invoicePayment);
+  }
+
+  @Override
+  public void validateMultipleInvoicePayment(
+      List<InvoicePayment> invoicePaymentList, boolean force) {
+    if (ObjectUtils.isEmpty(invoicePaymentList)) {
+      return;
+    }
+
+    int i = 0;
+    for (InvoicePayment invoicePayment : invoicePaymentList) {
+      try {
+        if (invoicePayment != null) {
+          invoicePayment = invoicePaymentRepository.find(invoicePayment.getId());
+          validate(invoicePayment, force);
+        }
+      } catch (Exception e) {
+        TraceBackService.trace(e);
+      } finally {
+        if (++i % jpaLimit == 0) {
+          JPA.clear();
+        }
+      }
+    }
   }
 
   protected void validatePartnerAccount(Invoice invoice) throws AxelorException {
@@ -121,22 +118,7 @@ public class InvoicePaymentValidateServiceImpl implements InvoicePaymentValidate
     if (!partnerAccount.getReconcileOk() || !partnerAccount.getUseForPartnerBalance()) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(
-              com.axelor.apps.account.exception.IExceptionMessage
-                  .ACCOUNT_RECONCILABLE_USE_FOR_PARTNER_BALANCE));
-    }
-  }
-
-  protected void createInvoicePaymentMove(InvoicePayment invoicePayment)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
-    Invoice invoice = invoicePayment.getInvoice();
-    if (accountConfigService
-        .getAccountConfig(invoice.getCompany())
-        .getGenerateMoveForInvoicePayment()) {
-      this.createMoveForInvoicePayment(invoicePayment);
-    } else {
-      Beans.get(AccountingSituationService.class).updateCustomerCredit(invoice.getPartner());
-      invoicePaymentRepository.save(invoicePayment);
+          I18n.get(AccountExceptionMessage.ACCOUNT_RECONCILABLE_USE_FOR_PARTNER_BALANCE));
     }
   }
 
@@ -146,125 +128,7 @@ public class InvoicePaymentValidateServiceImpl implements InvoicePaymentValidate
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public void validate(InvoicePayment invoicePayment)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+  public void validate(InvoicePayment invoicePayment) throws AxelorException {
     validate(invoicePayment, false);
-  }
-
-  /**
-   * Method to create a payment move for an invoice Payment
-   *
-   * <p>Create a move and reconcile it with the invoice move
-   *
-   * @param invoicePayment An invoice payment
-   * @throws AxelorException
-   */
-  @Transactional(rollbackOn = {Exception.class})
-  public InvoicePayment createMoveForInvoicePayment(InvoicePayment invoicePayment)
-      throws AxelorException {
-
-    Invoice invoice = invoicePayment.getInvoice();
-    Company company = invoice.getCompany();
-    PaymentMode paymentMode = invoicePayment.getPaymentMode();
-    Partner partner = invoice.getPartner();
-    LocalDate paymentDate = invoicePayment.getPaymentDate();
-    BigDecimal paymentAmount = invoicePayment.getAmount();
-    BankDetails companyBankDetails = invoicePayment.getCompanyBankDetails();
-
-    Account customerAccount;
-
-    Journal journal =
-        paymentModeService.getPaymentModeJournal(paymentMode, company, companyBankDetails);
-
-    boolean isDebitInvoice = moveService.getMoveToolService().isDebitCustomer(invoice, true);
-
-    MoveLine invoiceMoveLine =
-        moveService.getMoveToolService().getInvoiceCustomerMoveLineByLoop(invoice);
-
-    if (invoice.getOperationSubTypeSelect() == InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE) {
-
-      AccountConfig accountConfig = accountConfigService.getAccountConfig(company);
-
-      customerAccount = accountConfigService.getAdvancePaymentAccount(accountConfig);
-    } else {
-      if (invoiceMoveLine == null) {
-        return null;
-      }
-      customerAccount = invoiceMoveLine.getAccount();
-    }
-    String origin = invoicePayment.getInvoice().getInvoiceId();
-    if (invoicePayment.getPaymentMode().getTypeSelect() == PaymentModeRepository.TYPE_CHEQUE
-        || invoicePayment.getPaymentMode().getTypeSelect()
-            == PaymentModeRepository.TYPE_IPO_CHEQUE) {
-      origin = invoicePayment.getChequeNumber() != null ? invoicePayment.getChequeNumber() : origin;
-    } else if (invoicePayment.getPaymentMode().getTypeSelect()
-        == PaymentModeRepository.TYPE_BANK_CARD) {
-      origin =
-          invoicePayment.getInvoicePaymentRef() != null
-              ? invoicePayment.getInvoicePaymentRef()
-              : origin;
-    }
-    if (invoicePayment.getInvoice().getOperationTypeSelect()
-            == InvoiceRepository.OPERATION_TYPE_SUPPLIER_PURCHASE
-        || invoicePayment.getInvoice().getOperationTypeSelect()
-            == InvoiceRepository.OPERATION_TYPE_SUPPLIER_REFUND) {
-      origin = invoicePayment.getInvoice().getSupplierInvoiceNb();
-    }
-    Move move =
-        moveService
-            .getMoveCreateService()
-            .createMove(
-                journal,
-                company,
-                invoicePayment.getCurrency(),
-                partner,
-                paymentDate,
-                paymentMode,
-                MoveRepository.TECHNICAL_ORIGIN_AUTOMATIC,
-                MoveRepository.FUNCTIONAL_ORIGIN_PAYMENT);
-
-    move.setTradingName(invoice.getTradingName());
-
-    move.addMoveLineListItem(
-        moveLineService.createMoveLine(
-            move,
-            partner,
-            paymentModeService.getPaymentModeAccount(paymentMode, company, companyBankDetails),
-            paymentAmount,
-            isDebitInvoice,
-            paymentDate,
-            null,
-            1,
-            origin,
-            invoicePayment.getDescription()));
-
-    MoveLine customerMoveLine =
-        moveLineService.createMoveLine(
-            move,
-            partner,
-            customerAccount,
-            paymentAmount,
-            !isDebitInvoice,
-            paymentDate,
-            null,
-            2,
-            origin,
-            invoicePayment.getDescription());
-
-    move.addMoveLineListItem(customerMoveLine);
-
-    moveService.getMoveValidateService().validate(move);
-
-    if (invoice.getOperationSubTypeSelect() != InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE) {
-      Reconcile reconcile =
-          reconcileService.reconcile(invoiceMoveLine, customerMoveLine, true, false);
-
-      invoicePayment.setReconcile(reconcile);
-    }
-    invoicePayment.setMove(move);
-
-    invoicePaymentRepository.save(invoicePayment);
-
-    return invoicePayment;
   }
 }

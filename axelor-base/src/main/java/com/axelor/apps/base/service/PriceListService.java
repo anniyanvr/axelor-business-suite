@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,24 +14,25 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.PriceList;
 import com.axelor.apps.base.db.PriceListLine;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.ProductCategory;
-import com.axelor.apps.base.db.repo.AppBaseRepository;
 import com.axelor.apps.base.db.repo.PriceListLineRepository;
 import com.axelor.apps.base.db.repo.PriceListRepository;
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.db.JPA;
 import com.axelor.i18n.I18n;
-import com.google.inject.Inject;
+import com.axelor.studio.db.repo.AppBaseRepository;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -116,31 +118,71 @@ public class PriceListService {
 
   @Transactional
   public void setPriceListLineAnomaly(Product product) {
+    int saleAnomaly;
     if (!product.getSellable()) {
-      product
-          .getPriceListLineList()
-          .forEach(
-              line -> {
-                line.setAnomalySelect(PriceListLineRepository.ANOMALY_UNAVAILABLE_FOR_SALE);
-                priceListLineRepo.persist(line);
-              });
+      saleAnomaly = PriceListLineRepository.ANOMALY_UNAVAILABLE_FOR_SALE;
     } else if (product.getIsUnrenewed()) {
-      product
-          .getPriceListLineList()
-          .forEach(
-              line -> {
-                line.setAnomalySelect(PriceListLineRepository.ANOMALY_NOT_RENEWED);
-                priceListLineRepo.persist(line);
-              });
+      saleAnomaly = PriceListLineRepository.ANOMALY_NOT_RENEWED;
     } else {
-      product
-          .getPriceListLineList()
-          .forEach(
-              line -> {
-                line.setAnomalySelect(null);
-                priceListLineRepo.persist(line);
-              });
+      saleAnomaly = 0;
     }
+
+    int purchaseAnomaly =
+        !product.getPurchasable() ? PriceListLineRepository.ANOMALY_UNAVAILABLE_FOR_PURCHASE : 0;
+
+    JPA.em()
+        .createQuery(
+            "UPDATE PriceListLine self SET self.anomalySelect = :anomaly "
+                + "WHERE self.product.id = :productId "
+                + "AND self.priceList.id IN ("
+                + "  SELECT pl.id FROM PriceList pl "
+                + "  WHERE pl.isActive = true AND pl.typeSelect = :typeSelect)")
+        .setParameter("productId", product.getId())
+        .setParameter("typeSelect", PriceListRepository.TYPE_SALE)
+        .setParameter("anomaly", saleAnomaly)
+        .executeUpdate();
+
+    JPA.em()
+        .createQuery(
+            "UPDATE PriceListLine self SET self.anomalySelect = :anomaly "
+                + "WHERE self.product.id = :productId "
+                + "AND self.priceList.id IN ("
+                + "  SELECT pl.id FROM PriceList pl "
+                + "  WHERE pl.isActive = true AND pl.typeSelect = :typeSelect)")
+        .setParameter("productId", product.getId())
+        .setParameter("typeSelect", PriceListRepository.TYPE_PURCHASE)
+        .setParameter("anomaly", purchaseAnomaly)
+        .executeUpdate();
+
+    JPA.em()
+        .createQuery(
+            "UPDATE PriceListLine self SET self.anomalySelect = 0 "
+                + "WHERE self.product.id = :productId "
+                + "AND self.priceList.id IN ("
+                + "  SELECT pl.id FROM PriceList pl "
+                + "  WHERE pl.isActive = true "
+                + "  AND pl.typeSelect <> :typeSale AND pl.typeSelect <> :typePurchase)")
+        .setParameter("productId", product.getId())
+        .setParameter("typeSale", PriceListRepository.TYPE_SALE)
+        .setParameter("typePurchase", PriceListRepository.TYPE_PURCHASE)
+        .executeUpdate();
+  }
+
+  protected int getPriceListTypeSelect(PriceListLine priceListLine) {
+    return priceListLine.getPriceList().getTypeSelect();
+  }
+
+  protected int getAnomalySelect(Product product, Integer typeSelect) {
+    if (typeSelect == PriceListRepository.TYPE_SALE) {
+      if (!product.getSellable()) {
+        return PriceListLineRepository.ANOMALY_UNAVAILABLE_FOR_SALE;
+      } else if (product.getIsUnrenewed()) {
+        return PriceListLineRepository.ANOMALY_NOT_RENEWED;
+      }
+    } else if (typeSelect == PriceListRepository.TYPE_PURCHASE && !product.getPurchasable()) {
+      return PriceListLineRepository.ANOMALY_UNAVAILABLE_FOR_PURCHASE;
+    }
+    return 0;
   }
 
   public int getDiscountTypeSelect(PriceListLine priceListLine) {
@@ -151,7 +193,7 @@ public class PriceListService {
   public BigDecimal getDiscountAmount(PriceListLine priceListLine, BigDecimal unitPrice) {
 
     switch (priceListLine.getTypeSelect()) {
-      case PriceListLineRepository.TYPE_ADDITIONNAL:
+      case PriceListLineRepository.TYPE_INCREASE:
         return priceListLine.getAmount().negate();
 
       case PriceListLineRepository.TYPE_DISCOUNT:
@@ -168,7 +210,7 @@ public class PriceListService {
   public BigDecimal getUnitPriceDiscounted(PriceListLine priceListLine, BigDecimal unitPrice) {
 
     switch (priceListLine.getTypeSelect()) {
-      case PriceListLineRepository.TYPE_ADDITIONNAL:
+      case PriceListLineRepository.TYPE_INCREASE:
         if (priceListLine.getAmountTypeSelect() == PriceListLineRepository.AMOUNT_TYPE_FIXED) {
           return unitPrice.add(priceListLine.getAmount());
         } else if (priceListLine.getAmountTypeSelect()
@@ -210,7 +252,7 @@ public class PriceListService {
     if (discountTypeSelect == PriceListLineRepository.AMOUNT_TYPE_FIXED) {
       return unitPrice
           .subtract(discountAmount)
-          .setScale(appBaseService.getNbDecimalDigitForUnitPrice(), RoundingMode.HALF_UP);
+          .setScale(PriceListLineRepository.DISCOUNT_SCALE, RoundingMode.HALF_UP);
     } else if (discountTypeSelect == PriceListLineRepository.AMOUNT_TYPE_PERCENT) {
       return unitPrice
           .multiply(new BigDecimal(100).subtract(discountAmount))
@@ -310,7 +352,7 @@ public class PriceListService {
     if (beginDate.compareTo(endDate) > 0) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.PRICE_LIST_DATE_WRONG_ORDER));
+          I18n.get(BaseExceptionMessage.PRICE_LIST_DATE_WRONG_ORDER));
     }
   }
 }

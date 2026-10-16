@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.service;
 
@@ -21,11 +22,11 @@ import com.axelor.apps.account.db.InterbankCodeLine;
 import com.axelor.apps.account.db.repo.InterbankCodeLineRepository;
 import com.axelor.apps.account.service.app.AppAccountService;
 import com.axelor.apps.account.service.bankorder.file.cfonb.CfonbImportService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
-import com.axelor.apps.tool.file.FileTool;
-import com.axelor.exception.AxelorException;
+import com.axelor.utils.helpers.file.FileHelper;
 import com.google.common.io.Files;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
@@ -56,7 +57,7 @@ public class RejectImportService {
 
   public String getDestFilename(String src, String dest) {
     // chemin du fichier de destination :
-    log.debug("Chemin de destination : {}", dest);
+    log.debug("Destination path : {}", dest);
     String newDest = ((dest).split("\\."))[0];
     String timeString = appAccountService.getTodayDateTime().toString();
     timeString = timeString.replace("-", "");
@@ -72,7 +73,7 @@ public class RejectImportService {
       newDest += src.split("\\.")[1];
     }
 
-    log.debug("Chemin de destination généré : {}", newDest);
+    log.debug("Destination path generated : {}", newDest);
 
     return newDest;
   }
@@ -83,7 +84,7 @@ public class RejectImportService {
     this.createFilePath(dest);
 
     // copie du fichier d'import dans un repetoire temporaire
-    FileTool.copy(src, dest);
+    FileHelper.copy(src, dest);
 
     return dest;
   }
@@ -153,7 +154,7 @@ public class RejectImportService {
         return interbankCodeLineRepo
             .all()
             .filter(
-                "self.code = ?1 AND self.interbankCode = ?2 AND self.transferCfonbOk = 'true'",
+                "self.code = ?1 AND self.interbankCode = ?2 AND self.transferCfonbOk = true",
                 reasonCode,
                 appAccountService.getAppAccount().getTransferAndDirectDebitInterbankCode())
             .fetchOne();
@@ -161,7 +162,7 @@ public class RejectImportService {
         return interbankCodeLineRepo
             .all()
             .filter(
-                "self.code = ?1 AND self.interbankCode = ?2 AND self.directDebitAndTipCfonbOk = 'true'",
+                "self.code = ?1 AND self.interbankCode = ?2 AND self.directDebitAndTipCfonbOk = true",
                 reasonCode,
                 appAccountService.getAppAccount().getTransferAndDirectDebitInterbankCode())
             .fetchOne();
@@ -169,7 +170,7 @@ public class RejectImportService {
         return interbankCodeLineRepo
             .all()
             .filter(
-                "self.code = ?1 AND self.interbankCode = ?2 AND self.directDebitSepaOk = 'true'",
+                "self.code = ?1 AND self.interbankCode = ?2 AND self.directDebitSepaOk = true",
                 reasonCode,
                 appAccountService.getAppAccount().getTransferAndDirectDebitInterbankCode())
             .fetchOne();
@@ -177,7 +178,7 @@ public class RejectImportService {
         return interbankCodeLineRepo
             .all()
             .filter(
-                "self.code = ?1 AND self.interbankCode = ?2 AND self.lcrBorOk = 'true'",
+                "self.code = ?1 AND self.interbankCode = ?2 AND self.lcrBorOk = true",
                 reasonCode,
                 appAccountService.getAppAccount().getTransferAndDirectDebitInterbankCode())
             .fetchOne();
@@ -185,7 +186,7 @@ public class RejectImportService {
         return interbankCodeLineRepo
             .all()
             .filter(
-                "self.code = ?1 AND self.interbankCode = ?2 AND self.chequeOk = 'true'",
+                "self.code = ?1 AND self.interbankCode = ?2 AND self.chequeOk = true",
                 reasonCode,
                 appAccountService.getAppAccount().getChequeInterbankCode())
             .fetchOne();

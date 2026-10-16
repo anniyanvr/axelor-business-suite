@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,15 +14,17 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.Product;
 import com.axelor.apps.base.db.Unit;
 import com.axelor.apps.base.db.repo.PriceListRepository;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
 import com.axelor.apps.base.service.PartnerPriceListService;
 import com.axelor.apps.base.service.UnitConversionService;
 import com.axelor.apps.base.service.app.AppBaseService;
@@ -47,22 +50,23 @@ import com.axelor.apps.supplychain.db.repo.MrpForecastRepository;
 import com.axelor.apps.supplychain.db.repo.MrpLineOriginRepository;
 import com.axelor.apps.supplychain.db.repo.MrpLineRepository;
 import com.axelor.apps.supplychain.db.repo.MrpLineTypeRepository;
-import com.axelor.apps.supplychain.exception.IExceptionMessage;
+import com.axelor.apps.supplychain.exception.SupplychainExceptionMessage;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.AuditableModel;
 import com.axelor.db.EntityHelper;
 import com.axelor.db.Model;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +76,7 @@ public class MrpLineServiceImpl implements MrpLineService {
   private final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   protected AppBaseService appBaseService;
-  protected PurchaseOrderSupplychainService purchaseOrderSupplychainService;
+  protected PurchaseOrderCreateSupplychainService purchaseOrderCreateSupplychainService;
   protected PurchaseOrderService purchaseOrderService;
   protected PurchaseOrderLineService purchaseOrderLineService;
   protected PurchaseOrderRepository purchaseOrderRepo;
@@ -85,7 +89,7 @@ public class MrpLineServiceImpl implements MrpLineService {
   @Inject
   public MrpLineServiceImpl(
       AppBaseService appBaseService,
-      PurchaseOrderSupplychainService purchaseOrderSupplychainService,
+      PurchaseOrderCreateSupplychainService purchaseOrderCreateSupplychainService,
       PurchaseOrderService purchaseOrderService,
       PurchaseOrderLineService purchaseOrderLineService,
       PurchaseOrderRepository purchaseOrderRepo,
@@ -96,7 +100,7 @@ public class MrpLineServiceImpl implements MrpLineService {
       MrpLineRepository mrpLineRepo) {
 
     this.appBaseService = appBaseService;
-    this.purchaseOrderSupplychainService = purchaseOrderSupplychainService;
+    this.purchaseOrderCreateSupplychainService = purchaseOrderCreateSupplychainService;
     this.purchaseOrderService = purchaseOrderService;
     this.purchaseOrderLineService = purchaseOrderLineService;
     this.purchaseOrderRepo = purchaseOrderRepo;
@@ -149,7 +153,7 @@ public class MrpLineServiceImpl implements MrpLineService {
         throw new AxelorException(
             mrpLine,
             TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-            I18n.get(IExceptionMessage.MRP_LINE_1),
+            I18n.get(SupplychainExceptionMessage.MRP_LINE_1),
             product.getFullName());
       }
     }
@@ -160,8 +164,11 @@ public class MrpLineServiceImpl implements MrpLineService {
     PurchaseOrder purchaseOrder = null;
 
     if (isProposalsPerSupplier) {
-      if (purchaseOrdersPerSupplier != null) {
+      if (purchaseOrdersPerSupplier != null && !purchaseOrdersPerSupplier.isEmpty()) {
         purchaseOrder = purchaseOrdersPerSupplier.get(supplierPartner);
+        if (purchaseOrder != null) {
+          purchaseOrder = purchaseOrderRepo.find(purchaseOrder.getId());
+        }
       }
     } else {
       if (purchaseOrders != null) {
@@ -173,12 +180,12 @@ public class MrpLineServiceImpl implements MrpLineService {
     if (purchaseOrder == null) {
       purchaseOrder =
           purchaseOrderRepo.save(
-              purchaseOrderSupplychainService.createPurchaseOrder(
+              purchaseOrderCreateSupplychainService.createPurchaseOrder(
                   AuthUtils.getUser(),
                   company,
                   null,
                   supplierPartner.getCurrency(),
-                  maturityDate,
+                  null,
                   this.getPurchaseOrderOrigin(mrpLine),
                   null,
                   stockLocation,
@@ -186,7 +193,8 @@ public class MrpLineServiceImpl implements MrpLineService {
                   Beans.get(PartnerPriceListService.class)
                       .getDefaultPriceList(supplierPartner, PriceListRepository.TYPE_PURCHASE),
                   supplierPartner,
-                  null));
+                  null,
+                  supplierPartner.getFiscalPosition()));
       if (isProposalsPerSupplier) {
         if (purchaseOrdersPerSupplier != null) {
           purchaseOrdersPerSupplier.put(supplierPartner, purchaseOrder);
@@ -219,28 +227,73 @@ public class MrpLineServiceImpl implements MrpLineService {
           Beans.get(UnitConversionService.class)
               .convert(product.getUnit(), unit, qty, qty.scale(), product);
     }
+    purchaseOrder.setNotes(supplierPartner.getPurchaseOrderComments());
+    LocalDate desiredReceiptDate = maturityDate;
+    if (mrpLine.getEstimatedDeliveryMrpLine() != null) {
+      desiredReceiptDate = mrpLine.getEstimatedDeliveryMrpLine().getMaturityDate();
+    }
+
     PurchaseOrderLine poLine =
-        purchaseOrderLineService.createPurchaseOrderLine(
-            purchaseOrder, product, null, null, qty, unit);
-    poLine.setDesiredDelivDate(maturityDate);
-    purchaseOrder.addPurchaseOrderLineListItem(poLine);
+        createOrUpdatePurchaseOrderLine(purchaseOrder, product, unit, qty, desiredReceiptDate);
+
+    purchaseOrderLineService.compute(poLine, purchaseOrder);
 
     purchaseOrderService.computePurchaseOrder(purchaseOrder);
 
     linkToOrder(mrpLine, purchaseOrder);
   }
 
+  protected PurchaseOrderLine createOrUpdatePurchaseOrderLine(
+      PurchaseOrder purchaseOrder,
+      Product product,
+      Unit unit,
+      BigDecimal qty,
+      LocalDate desiredReceiptDate)
+      throws AxelorException {
+    PurchaseOrderLine poLine =
+        findMatchingPurchaseOrderLine(purchaseOrder, product, unit, desiredReceiptDate);
+    if (poLine != null) {
+      poLine.setQty(poLine.getQty().add(qty));
+      return poLine;
+    }
+
+    poLine =
+        purchaseOrderLineService.createPurchaseOrderLine(
+            purchaseOrder, product, null, null, qty, unit);
+    poLine.setDesiredReceiptDate(desiredReceiptDate);
+    poLine.setEstimatedReceiptDate(desiredReceiptDate);
+    purchaseOrder.addPurchaseOrderLineListItem(poLine);
+    return poLine;
+  }
+
+  protected PurchaseOrderLine findMatchingPurchaseOrderLine(
+      PurchaseOrder purchaseOrder, Product product, Unit unit, LocalDate desiredReceiptDate) {
+    if (purchaseOrder.getPurchaseOrderLineList() == null) {
+      return null;
+    }
+
+    return purchaseOrder.getPurchaseOrderLineList().stream()
+        .filter(Objects::nonNull)
+        .filter(purchaseOrderLine -> product.equals(purchaseOrderLine.getProduct()))
+        .filter(purchaseOrderLine -> Objects.equals(unit, purchaseOrderLine.getUnit()))
+        .filter(
+            purchaseOrderLine ->
+                Objects.equals(desiredReceiptDate, purchaseOrderLine.getDesiredReceiptDate()))
+        .findFirst()
+        .orElse(null);
+  }
+
   protected String getPurchaseOrderOrigin(MrpLine mrpLine) {
-    String origin = "";
+    StringBuilder origin = new StringBuilder();
     int count = 0;
     for (MrpLineOrigin mrpLineOrigin : mrpLine.getMrpLineOriginList()) {
       count++;
-      origin += getMrpLineOriginStr(mrpLineOrigin);
+      origin.append(getMrpLineOriginStr(mrpLineOrigin));
       if (count < mrpLine.getMrpLineOriginList().size()) {
-        origin += " & ";
+        origin.append(" & ");
       }
     }
-    return origin;
+    return origin.toString();
   }
 
   protected String getMrpLineOriginStr(MrpLineOrigin mrpLineOrigin) {
@@ -431,5 +484,18 @@ public class MrpLineServiceImpl implements MrpLineService {
       mrpLine.setProposalToProcess(proposalToProcess);
       mrpLineRepo.save(mrpLine);
     }
+  }
+
+  @Override
+  public List<MrpLine> getMrpLineListCopy(List<MrpLine> mrpLineList) {
+    List<MrpLine> copyMrpLineList = new ArrayList<>();
+    mrpLineList =
+        mrpLineRepo.findByIds(
+            mrpLineList.stream().map(MrpLine::getId).collect(Collectors.toList()));
+    for (MrpLine mrpLine : mrpLineList) {
+      copyMrpLineList.add(mrpLineRepo.copy(mrpLine, true));
+    }
+
+    return copyMrpLineList;
   }
 }

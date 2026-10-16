@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.account.web;
 
@@ -23,29 +24,40 @@ import com.axelor.apps.account.db.Move;
 import com.axelor.apps.account.db.PaymentMode;
 import com.axelor.apps.account.db.repo.InvoicePaymentRepository;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
+import com.axelor.apps.account.exception.AccountExceptionMessage;
+import com.axelor.apps.account.service.invoice.InvoiceToolService;
 import com.axelor.apps.account.service.move.MoveCustAccountService;
+import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentAlertService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentCancelService;
+import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentComputeService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentCreateService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentToolService;
+import com.axelor.apps.account.service.payment.invoice.payment.InvoiceTermPaymentService;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.ResponseMessageType;
 import com.axelor.apps.base.db.BankDetails;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.repo.PartnerRepository;
 import com.axelor.apps.base.service.BankDetailsService;
-import com.axelor.apps.tool.StringTool;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.common.ObjectUtils;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.ResponseMessageType;
-import com.axelor.exception.service.TraceBackService;
+import com.axelor.common.StringUtils;
+import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
+import com.axelor.utils.helpers.ContextHelper;
+import com.axelor.utils.helpers.StringHelper;
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
-import com.google.inject.Singleton;
+import jakarta.annotation.Nullable;
+import jakarta.inject.Singleton;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
+import org.apache.commons.lang3.tuple.Pair;
 
 @Singleton
 public class InvoicePaymentController {
@@ -102,7 +114,7 @@ public class InvoicePaymentController {
     if (bankDetailsList.isEmpty()) {
       response.setAttr("companyBankDetails", "domain", "self.id IN (0)");
     } else {
-      String idList = StringTool.getIdListString(bankDetailsList);
+      String idList = StringHelper.getIdListString(bankDetailsList);
       response.setAttr("companyBankDetails", "domain", "self.id IN (" + idList + ")");
     }
   }
@@ -192,5 +204,183 @@ public class InvoicePaymentController {
     } catch (Exception e) {
       TraceBackService.trace(response, e, ResponseMessageType.ERROR);
     }
+  }
+
+  public void computeDatasForFinancialDiscount(ActionRequest request, ActionResponse response) {
+    try {
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+      Long invoiceId =
+          Long.valueOf(
+              (Integer) ((LinkedHashMap<?, ?>) request.getContext().get("_invoice")).get("id"));
+
+      List<Long> invoiceTermIdList =
+          Beans.get(InvoicePaymentComputeService.class)
+              .computeDataForFinancialDiscount(invoicePayment, invoiceId);
+
+      response.setValues(this.getInvoiceTermValuesMap(null, invoicePayment, invoiceTermIdList));
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  public void applyFinancialDiscountFields(ActionRequest request, ActionResponse response) {
+    try {
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+      Long invoiceId =
+          Long.valueOf(
+              (Integer) ((LinkedHashMap<?, ?>) request.getContext().get("_invoice")).get("id"));
+
+      List<Long> invoiceTermIdList =
+          Beans.get(InvoiceTermPaymentService.class)
+              .applyFinancialDiscount(invoicePayment, invoiceId);
+
+      response.setValues(this.getInvoiceTermValuesMap(null, invoicePayment, invoiceTermIdList));
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  public void changeAmount(ActionRequest request, ActionResponse response) {
+    try {
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+      Long invoiceId =
+          Long.valueOf(
+              (Integer) ((LinkedHashMap<?, ?>) request.getContext().get("_invoice")).get("id"));
+      Pair<List<Long>, Boolean> result =
+          Beans.get(InvoicePaymentToolService.class).changeAmount(invoicePayment, invoiceId);
+
+      if (result == null) {
+        response.setAttr("amountErrorPanel", "hidden", true);
+        return;
+      }
+
+      response.setValues(this.getInvoiceTermValuesMap(null, invoicePayment, result.getLeft()));
+      response.setAttr("amountErrorPanel", "hidden", result.getRight());
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  /**
+   * Method that loads unpaid invoice terms and init invoiceTermPayments
+   *
+   * @param request
+   * @param response
+   */
+  public void loadInvoiceTerms(ActionRequest request, ActionResponse response) {
+    try {
+      Long invoiceId =
+          Long.valueOf(
+              (Integer) ((LinkedHashMap<?, ?>) request.getContext().get("_invoice")).get("id"));
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+      List<Long> invoiceTermIdList =
+          Beans.get(InvoicePaymentToolService.class).loadInvoiceTerms(invoicePayment, invoiceId);
+
+      Map<String, Object> invoiceTermMap = new HashMap<String, Object>();
+
+      invoiceTermMap.put("invoice", invoicePayment.getInvoice());
+
+      response.setValues(
+          this.getInvoiceTermValuesMap(invoiceTermMap, invoicePayment, invoiceTermIdList));
+
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  private Map<String, Object> getInvoiceTermValuesMap(
+      Map<String, Object> invoiceTermMap,
+      InvoicePayment invoicePayment,
+      List<Long> invoiceTermIdList) {
+    if (ObjectUtils.isEmpty(invoiceTermMap)) {
+      invoiceTermMap = new HashMap<String, Object>();
+    }
+    invoiceTermMap.put("$invoiceTerms", invoiceTermIdList);
+    invoiceTermMap.put("amount", invoicePayment.getAmount());
+    invoiceTermMap.put(
+        "totalAmountWithFinancialDiscount", invoicePayment.getTotalAmountWithFinancialDiscount());
+    invoiceTermMap.put(
+        "financialDiscountTotalAmount", invoicePayment.getFinancialDiscountTotalAmount());
+    invoiceTermMap.put("applyFinancialDiscount", invoicePayment.getApplyFinancialDiscount());
+    invoiceTermMap.put("financialDiscount", invoicePayment.getFinancialDiscount());
+    invoiceTermMap.put(
+        "financialDiscountDeadlineDate", invoicePayment.getFinancialDiscountDeadlineDate());
+    invoiceTermMap.put(
+        "financialDiscountTaxAmount", invoicePayment.getFinancialDiscountTaxAmount());
+    invoiceTermMap.put("financialDiscountAmount", invoicePayment.getFinancialDiscountAmount());
+    invoiceTermMap.put("invoiceTermPaymentList", invoicePayment.getInvoiceTermPaymentList());
+    return invoiceTermMap;
+  }
+
+  @SuppressWarnings("unchecked")
+  public void setMassPaymentAmount(ActionRequest request, ActionResponse response) {
+    try {
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+      List<Long> invoiceIdList = (List<Long>) request.getContext().get("_invoices");
+
+      response.setValue(
+          "amount",
+          Beans.get(InvoicePaymentToolService.class)
+              .getMassPaymentAmount(invoiceIdList, invoicePayment.getPaymentDate()));
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  public void applyFinancialDiscount(ActionRequest request, ActionResponse response) {
+    try {
+      InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+      response.setValue(
+          "applyFinancialDiscount",
+          Beans.get(InvoicePaymentToolService.class).applyFinancialDiscount(invoicePayment));
+      response.setValue("manualChange", true);
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  public void setIsMultiCurrency(ActionRequest request, ActionResponse response) {
+    try {
+      Invoice invoice = ContextHelper.getContextParent(request.getContext(), Invoice.class, 1);
+      response.setAttr("$isMultiCurrency", "value", InvoiceToolService.isMultiCurrency(invoice));
+    } catch (Exception e) {
+      TraceBackService.trace(response, e, ResponseMessageType.ERROR);
+    }
+  }
+
+  public void validateBeforeUnlink(ActionRequest request, ActionResponse response) {
+    InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+    try {
+      Beans.get(InvoicePaymentCancelService.class).validateBeforeUnlink(invoicePayment);
+    } catch (AxelorException e) {
+      response.setAlert(I18n.get(AccountExceptionMessage.INVOICE_PAYMENT_UNLINK_ALERT));
+    }
+  }
+
+  public void reversePaymentMove(ActionRequest request, ActionResponse response)
+      throws AxelorException {
+    InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+    Beans.get(InvoicePaymentCancelService.class).reversePaymentMove(invoicePayment);
+
+    response.setReload(true);
+  }
+
+  public void validateBeforeReversePaymentMove(ActionRequest request, ActionResponse response) {
+    InvoicePayment invoicePayment = request.getContext().asType(InvoicePayment.class);
+
+    String alert =
+        Beans.get(InvoicePaymentAlertService.class).validateBeforeReverse(invoicePayment);
+
+    if (StringUtils.isEmpty(alert)) {
+      return;
+    }
+
+    response.setAlert(I18n.get(alert));
   }
 }

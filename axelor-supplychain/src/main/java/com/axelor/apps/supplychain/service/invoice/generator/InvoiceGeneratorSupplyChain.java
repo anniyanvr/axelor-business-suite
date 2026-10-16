@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,18 +14,21 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service.invoice.generator;
 
+import com.axelor.apps.account.db.AccountConfig;
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
+import com.axelor.apps.account.service.config.AccountConfigService;
 import com.axelor.apps.account.service.invoice.generator.InvoiceGenerator;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.CompanyRepository;
 import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.sale.db.SaleOrder;
 import com.axelor.apps.stock.db.StockMove;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
-import com.axelor.exception.AxelorException;
 import com.axelor.inject.Beans;
 
 public abstract class InvoiceGeneratorSupplyChain extends InvoiceGenerator {
@@ -44,7 +48,9 @@ public abstract class InvoiceGeneratorSupplyChain extends InvoiceGenerator {
             ? InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND
             : InvoiceRepository.OPERATION_TYPE_CLIENT_SALE,
         saleOrder.getCompany(),
-        saleOrder.getPaymentCondition(),
+        isRefund
+            ? saleOrder.getClientPartner().getOutPaymentCondition()
+            : saleOrder.getPaymentCondition(),
         isRefund ? saleOrder.getClientPartner().getOutPaymentMode() : saleOrder.getPaymentMode(),
         saleOrder.getMainInvoicingAddress(),
         saleOrder.getInvoicedPartner() != null
@@ -58,7 +64,8 @@ public abstract class InvoiceGeneratorSupplyChain extends InvoiceGenerator {
         saleOrder.getInAti(),
         saleOrder.getCompanyBankDetails(),
         saleOrder.getTradingName(),
-        saleOrder.getGroupProductsOnPrintings());
+        saleOrder.getGroupProductsOnPrintings(),
+        saleOrder.getTaxNumber());
     this.saleOrder = saleOrder;
   }
 
@@ -87,7 +94,8 @@ public abstract class InvoiceGeneratorSupplyChain extends InvoiceGenerator {
         purchaseOrder.getInAti(),
         purchaseOrder.getCompanyBankDetails(),
         purchaseOrder.getTradingName(),
-        purchaseOrder.getGroupProductsOnPrintings());
+        purchaseOrder.getGroupProductsOnPrintings(),
+        purchaseOrder.getTaxNumber());
     this.purchaseOrder = purchaseOrder;
   }
 
@@ -130,9 +138,31 @@ public abstract class InvoiceGeneratorSupplyChain extends InvoiceGenerator {
 
     if (saleOrder != null) {
       invoice.setPrintingSettings(saleOrder.getPrintingSettings());
-
+      invoice.setFiscalPosition(saleOrder.getFiscalPosition());
     } else if (purchaseOrder != null) {
       invoice.setPrintingSettings(purchaseOrder.getPrintingSettings());
+      invoice.setFiscalPosition(purchaseOrder.getFiscalPosition());
+    } else if (partner != null) {
+      invoice.setFiscalPosition(partner.getFiscalPosition());
+    }
+
+    if (invoice.getOperationTypeSelect() == InvoiceRepository.OPERATION_TYPE_CLIENT_SALE
+        || invoice.getOperationTypeSelect() == InvoiceRepository.OPERATION_TYPE_CLIENT_REFUND) {
+
+      AccountConfig accountConfig = Beans.get(AccountConfigService.class).getAccountConfig(company);
+      invoice.setDisplayStockMoveOnInvoicePrinting(
+          accountConfig.getDisplayStockMoveOnInvoicePrinting());
+    }
+
+    boolean isIntercoFromInvoice =
+        Beans.get(AppSupplychainService.class).getAppSupplychain().getIntercoFromInvoice();
+
+    if (isIntercoFromInvoice
+        && !invoice.getCreatedByInterco()
+        && partner != null
+        && (Beans.get(CompanyRepository.class).all().filter("self.partner = ?", partner).count()
+            > 0)) {
+      invoice.setInterco(true);
     }
 
     return invoice;

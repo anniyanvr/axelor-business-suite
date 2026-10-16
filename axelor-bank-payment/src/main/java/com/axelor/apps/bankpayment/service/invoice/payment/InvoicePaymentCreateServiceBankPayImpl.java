@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,46 +14,66 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.invoice.payment;
 
 import com.axelor.apps.account.db.Invoice;
 import com.axelor.apps.account.db.InvoicePayment;
+import com.axelor.apps.account.db.Move;
 import com.axelor.apps.account.db.PaymentMode;
 import com.axelor.apps.account.db.repo.InvoicePaymentRepository;
 import com.axelor.apps.account.db.repo.InvoiceRepository;
+import com.axelor.apps.account.db.repo.PaymentModeRepository;
+import com.axelor.apps.account.db.repo.ReconcileRepository;
+import com.axelor.apps.account.service.PfpService;
+import com.axelor.apps.account.service.invoice.InvoiceService;
+import com.axelor.apps.account.service.invoice.InvoiceTermService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentCreateServiceImpl;
+import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentFinancialDiscountService;
 import com.axelor.apps.account.service.payment.invoice.payment.InvoicePaymentToolService;
-import com.axelor.apps.bankpayment.db.BankOrder;
-import com.axelor.apps.bankpayment.db.repo.BankOrderRepository;
-import com.axelor.apps.bankpayment.exception.IExceptionMessage;
+import com.axelor.apps.account.service.payment.invoice.payment.InvoiceTermPaymentService;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderMergeService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.BankDetails;
-import com.axelor.apps.base.service.CurrencyService;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.db.JPA;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
-import com.axelor.i18n.I18n;
+import com.axelor.common.ObjectUtils;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import com.google.inject.servlet.RequestScoped;
+import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-import javax.persistence.TypedQuery;
+import java.util.Objects;
 
-public class InvoicePaymentCreateServiceBankPayImpl extends InvoicePaymentCreateServiceImpl
-    implements InvoicePaymentCreateServiceBankPay {
+@RequestScoped
+public class InvoicePaymentCreateServiceBankPayImpl extends InvoicePaymentCreateServiceImpl {
 
   @Inject
   public InvoicePaymentCreateServiceBankPayImpl(
       InvoicePaymentRepository invoicePaymentRepository,
       InvoicePaymentToolService invoicePaymentToolService,
-      CurrencyService currencyService,
-      AppBaseService appBaseService) {
+      InvoicePaymentFinancialDiscountService invoicePaymentFinancialDiscountService,
+      AppBaseService appBaseService,
+      InvoiceTermPaymentService invoiceTermPaymentService,
+      InvoiceTermService invoiceTermService,
+      InvoiceService invoiceService,
+      PfpService pfpService,
+      ReconcileRepository reconcileRepository,
+      InvoiceRepository invoiceRepository) {
 
-    super(invoicePaymentRepository, invoicePaymentToolService, currencyService, appBaseService);
+    super(
+        invoicePaymentRepository,
+        invoicePaymentToolService,
+        invoicePaymentFinancialDiscountService,
+        appBaseService,
+        invoiceTermPaymentService,
+        invoiceTermService,
+        invoiceService,
+        pfpService,
+        reconcileRepository,
+        invoiceRepository);
   }
 
   @Override
@@ -75,7 +96,7 @@ public class InvoicePaymentCreateServiceBankPayImpl extends InvoicePaymentCreate
             bankDepositDate,
             chequeNumber);
 
-    if (!Beans.get(AppBaseService.class).isApp("bank-payment")) {
+    if (!appBaseService.isApp("bank-payment")) {
       return invoicePaymentList;
     }
 
@@ -90,45 +111,35 @@ public class InvoicePaymentCreateServiceBankPayImpl extends InvoicePaymentCreate
   }
 
   @Override
-  public List<Long> getInvoiceIdsToPay(List<Long> invoiceIdList) throws AxelorException {
-    List<Long> invoiceToPay = super.getInvoiceIdsToPay(invoiceIdList);
-
-    if (!Beans.get(AppBaseService.class).isApp("bank-payment")) {
-      return invoiceToPay;
+  public InvoicePayment createInvoicePayment(Invoice invoice, BigDecimal amount, Move paymentMove)
+      throws AxelorException {
+    InvoicePayment invoicePayment = null;
+    if (invoice != null && !ObjectUtils.isEmpty(invoice.getInvoicePaymentList())) {
+      invoicePayment =
+          invoice.getInvoicePaymentList().stream()
+              .filter(
+                  it ->
+                      (it.getAmount().compareTo(amount) == 0
+                          && it.getMove() == null
+                          && it.getReconcile() == null
+                          && Objects.equals(paymentMove.getCurrency(), it.getCurrency())
+                          && it.getBankOrder() != null
+                          && it.getBankOrder().getAccountingTriggerSelect()
+                              == PaymentModeRepository.ACCOUNTING_TRIGGER_NONE))
+              .findFirst()
+              .orElse(null);
     }
 
-    for (Long invoiceId : invoiceToPay) {
-      Invoice invoice = Beans.get(InvoiceRepository.class).find(invoiceId);
-      if (invoice.getPaymentMode().getGenerateBankOrder()) {
-        this.checkBankOrderAlreadyExist(invoice);
-      }
+    if (invoicePayment == null) {
+      return super.createInvoicePayment(invoice, amount, paymentMove);
     }
-    return invoiceToPay;
-  }
 
-  @Override
-  public void checkBankOrderAlreadyExist(Invoice invoice) throws AxelorException {
-    TypedQuery<BankOrder> q =
-        JPA.em()
-            .createQuery(
-                "select bankOrder "
-                    + "FROM Invoice invoice "
-                    + "LEFT JOIN InvoicePayment invoicePayment on invoice.id = invoicePayment.invoice "
-                    + "LEFT JOIN BankOrder as bankOrder on invoicePayment.bankOrder = bankOrder.id "
-                    + "WHERE invoice.id = :id "
-                    + "AND (bankOrder.statusSelect = :statusSelectDraft "
-                    + "OR bankOrder.statusSelect = :statusSelectAwaiting)",
-                BankOrder.class);
-    q.setParameter("id", invoice.getId());
-    q.setParameter("statusSelectDraft", BankOrderRepository.STATUS_DRAFT);
-    q.setParameter("statusSelectAwaiting", BankOrderRepository.STATUS_AWAITING_SIGNATURE);
-    List<BankOrder> listbankOrder = q.getResultList();
-    if (listbankOrder != null && !listbankOrder.isEmpty()) {
-      throw new AxelorException(
-          TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.INVOICE_BANK_ORDER_ALREADY_EXIST),
-          listbankOrder.get(0).getBankOrderSeq(),
-          invoice.getInvoiceId());
-    }
+    invoicePayment.setMove(paymentMove);
+    invoicePayment.setStatusSelect(InvoicePaymentRepository.STATUS_VALIDATED);
+
+    invoicePaymentToolService.updateAmountPaid(invoice);
+    invoicePaymentRepository.save(invoicePayment);
+
+    return invoicePayment;
   }
 }

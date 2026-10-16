@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,14 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service;
 
 import com.axelor.apps.base.db.Frequency;
 import com.axelor.apps.base.db.repo.FrequencyRepository;
-import com.axelor.apps.tool.date.DateTool;
 import com.axelor.i18n.I18n;
+import com.axelor.utils.helpers.date.LocalDateHelper;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -352,7 +353,7 @@ public class FrequencyServiceImpl implements FrequencyService {
             for (Integer occurence : occurences) {
               LocalDate date = getDay(day, occurence, year, month);
 
-              if (DateTool.isBetween(startDate, endDate, date)) {
+              if (LocalDateHelper.isBetween(startDate, endDate, date)) {
                 dates.add(date);
               }
             }
@@ -374,7 +375,7 @@ public class FrequencyServiceImpl implements FrequencyService {
               LocalDate date =
                   LocalDate.of(year, cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE));
 
-              if (DateTool.isBetween(startDate, endDate, date)) {
+              if (LocalDateHelper.isBetween(startDate, endDate, date)) {
                 dates.add(date);
               }
             }

@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,22 +14,19 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service;
 
-import com.axelor.apps.account.db.Budget;
-import com.axelor.apps.account.db.BudgetDistribution;
-import com.axelor.apps.account.db.BudgetLine;
-import com.axelor.apps.account.db.repo.BudgetDistributionRepository;
+import com.axelor.apps.account.db.Invoice;
+import com.axelor.apps.account.db.repo.InvoiceRepository;
 import com.axelor.apps.account.service.app.AppAccountService;
 import com.axelor.apps.account.service.config.AccountConfigService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
-import com.axelor.apps.base.db.Currency;
 import com.axelor.apps.base.db.Partner;
-import com.axelor.apps.base.db.PriceList;
-import com.axelor.apps.base.db.Product;
-import com.axelor.apps.base.db.TradingName;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.service.CurrencyScaleService;
 import com.axelor.apps.base.service.app.AppBaseService;
 import com.axelor.apps.purchase.db.PurchaseOrder;
 import com.axelor.apps.purchase.db.PurchaseOrderLine;
@@ -38,27 +36,23 @@ import com.axelor.apps.purchase.service.PurchaseOrderLineService;
 import com.axelor.apps.purchase.service.PurchaseOrderServiceImpl;
 import com.axelor.apps.sale.db.SaleOrder;
 import com.axelor.apps.sale.db.repo.SaleOrderRepository;
-import com.axelor.apps.stock.db.ShipmentMode;
+import com.axelor.apps.stock.db.StockConfig;
 import com.axelor.apps.stock.db.StockLocation;
+import com.axelor.apps.stock.service.PartnerStockSettingsService;
+import com.axelor.apps.stock.service.config.StockConfigService;
 import com.axelor.apps.supplychain.db.Timetable;
-import com.axelor.apps.supplychain.exception.IExceptionMessage;
+import com.axelor.apps.supplychain.exception.SupplychainExceptionMessage;
+import com.axelor.apps.supplychain.model.AnalyticLineModel;
 import com.axelor.apps.supplychain.service.app.AppSupplychainService;
-import com.axelor.apps.tool.date.DateTool;
-import com.axelor.auth.AuthUtils;
-import com.axelor.auth.db.User;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.supplychain.service.invoice.AdvancePaymentRefundService;
+import com.axelor.common.ObjectUtils;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -72,9 +66,16 @@ public class PurchaseOrderServiceSupplychainImpl extends PurchaseOrderServiceImp
   protected AppAccountService appAccountService;
   protected AppBaseService appBaseService;
   protected PurchaseOrderStockService purchaseOrderStockService;
-  protected BudgetSupplychainService budgetSupplychainService;
   protected PurchaseOrderLineRepository purchaseOrderLineRepository;
   protected PurchaseOrderLineService purchaseOrderLineService;
+  protected PartnerStockSettingsService partnerStockSettingsService;
+  protected StockConfigService stockConfigService;
+  protected CurrencyScaleService currencyScaleService;
+  protected AdvancePaymentRefundService refundService;
+  protected AnalyticLineModelService analyticLineModelService;
+  protected final PurchaseOrderEditStockMoveService purchaseOrderEditStockMoveService;
+  protected final PurchaseOrderChangeValidationSupplychainService
+      purchaseOrderChangeValidationSupplychainService;
 
   @Inject
   public PurchaseOrderServiceSupplychainImpl(
@@ -83,146 +84,71 @@ public class PurchaseOrderServiceSupplychainImpl extends PurchaseOrderServiceImp
       AppAccountService appAccountService,
       AppBaseService appBaseService,
       PurchaseOrderStockService purchaseOrderStockService,
-      BudgetSupplychainService budgetSupplychainService,
       PurchaseOrderLineRepository purchaseOrderLineRepository,
-      PurchaseOrderLineService purchaseOrderLineService) {
+      PurchaseOrderLineService purchaseOrderLineService,
+      PartnerStockSettingsService partnerStockSettingsService,
+      StockConfigService stockConfigService,
+      CurrencyScaleService currencyScaleService,
+      AdvancePaymentRefundService refundService,
+      AnalyticLineModelService analyticLineModelService,
+      PurchaseOrderEditStockMoveService purchaseOrderEditStockMoveService,
+      PurchaseOrderChangeValidationSupplychainService
+          purchaseOrderChangeValidationSupplychainService) {
 
     this.appSupplychainService = appSupplychainService;
     this.accountConfigService = accountConfigService;
     this.appAccountService = appAccountService;
     this.appBaseService = appBaseService;
     this.purchaseOrderStockService = purchaseOrderStockService;
-    this.budgetSupplychainService = budgetSupplychainService;
     this.purchaseOrderLineRepository = purchaseOrderLineRepository;
     this.purchaseOrderLineService = purchaseOrderLineService;
+    this.partnerStockSettingsService = partnerStockSettingsService;
+    this.stockConfigService = stockConfigService;
+    this.currencyScaleService = currencyScaleService;
+    this.refundService = refundService;
+    this.analyticLineModelService = analyticLineModelService;
+    this.purchaseOrderEditStockMoveService = purchaseOrderEditStockMoveService;
+    this.purchaseOrderChangeValidationSupplychainService =
+        purchaseOrderChangeValidationSupplychainService;
   }
 
   @Override
-  public PurchaseOrder createPurchaseOrder(
-      User buyerUser,
-      Company company,
-      Partner contactPartner,
-      Currency currency,
-      LocalDate deliveryDate,
-      String internalReference,
-      String externalReference,
-      StockLocation stockLocation,
-      LocalDate orderDate,
-      PriceList priceList,
-      Partner supplierPartner,
-      TradingName tradingName)
-      throws AxelorException {
+  public void _computePurchaseOrder(PurchaseOrder purchaseOrder) throws AxelorException {
+    super._computePurchaseOrder(purchaseOrder);
 
-    LOG.debug(
-        "Création d'une commande fournisseur : Société = {},  Reference externe = {}, Fournisseur = {}",
-        company.getName(),
-        externalReference,
-        supplierPartner.getFullName());
-
-    PurchaseOrder purchaseOrder =
-        super.createPurchaseOrder(
-            buyerUser,
-            company,
-            contactPartner,
-            currency,
-            deliveryDate,
-            internalReference,
-            externalReference,
-            orderDate,
-            priceList,
-            supplierPartner,
-            tradingName);
-
-    purchaseOrder.setStockLocation(stockLocation);
-
-    purchaseOrder.setPaymentMode(supplierPartner.getOutPaymentMode());
-    purchaseOrder.setPaymentCondition(supplierPartner.getPaymentCondition());
-
-    if (purchaseOrder.getPaymentMode() == null) {
-      purchaseOrder.setPaymentMode(
-          this.accountConfigService.getAccountConfig(company).getOutPaymentMode());
-    }
-
-    if (purchaseOrder.getPaymentCondition() == null) {
-      purchaseOrder.setPaymentCondition(
-          this.accountConfigService.getAccountConfig(company).getDefPaymentCondition());
-    }
-
-    purchaseOrder.setTradingName(tradingName);
-
-    return purchaseOrder;
-  }
-
-  @Transactional
-  @Override
-  public void generateBudgetDistribution(PurchaseOrder purchaseOrder) {
-    if (purchaseOrder.getPurchaseOrderLineList() != null) {
-      for (PurchaseOrderLine purchaseOrderLine : purchaseOrder.getPurchaseOrderLineList()) {
-        if (purchaseOrderLine.getBudget() != null
-            && (purchaseOrderLine.getBudgetDistributionList() == null
-                || purchaseOrderLine.getBudgetDistributionList().isEmpty())) {
-          BudgetDistribution budgetDistribution = new BudgetDistribution();
-          budgetDistribution.setBudget(purchaseOrderLine.getBudget());
-          budgetDistribution.setAmount(purchaseOrderLine.getCompanyExTaxTotal());
-          purchaseOrderLine.addBudgetDistributionListItem(budgetDistribution);
-        }
+    if (appSupplychainService.isApp("supplychain")) {
+      if (appAccountService.getAppAccount().getManageAdvancePaymentInvoice()) {
+        purchaseOrder.setAdvanceTotal(computeTotalInvoiceAdvancePayment(purchaseOrder));
       }
-      // purchaseOrderRepo.save(purchaseOrder);
     }
   }
 
-  @Transactional(rollbackOn = {Exception.class})
-  @Override
-  public PurchaseOrder mergePurchaseOrders(
-      List<PurchaseOrder> purchaseOrderList,
-      Currency currency,
-      Partner supplierPartner,
-      Company company,
-      StockLocation stockLocation,
-      Partner contactPartner,
-      PriceList priceList,
-      TradingName tradingName)
-      throws AxelorException {
-    String numSeq = "";
-    String externalRef = "";
-    for (PurchaseOrder purchaseOrderLocal : purchaseOrderList) {
-      if (!numSeq.isEmpty()) {
-        numSeq += "-";
-      }
-      numSeq += purchaseOrderLocal.getPurchaseOrderSeq();
+  protected BigDecimal computeTotalInvoiceAdvancePayment(PurchaseOrder purchaseOrder) {
+    BigDecimal total = BigDecimal.ZERO;
 
-      if (!externalRef.isEmpty()) {
-        externalRef += "|";
-      }
-      if (purchaseOrderLocal.getExternalReference() != null) {
-        externalRef += purchaseOrderLocal.getExternalReference();
-      }
+    if (purchaseOrder.getId() == null) {
+      return total;
     }
 
-    PurchaseOrder purchaseOrderMerged =
-        this.createPurchaseOrder(
-            AuthUtils.getUser(),
-            company,
-            contactPartner,
-            currency,
-            null,
-            numSeq,
-            externalRef,
-            stockLocation,
-            appBaseService.getTodayDate(company),
-            priceList,
-            supplierPartner,
-            tradingName);
-
-    super.attachToNewPurchaseOrder(purchaseOrderList, purchaseOrderMerged);
-
-    this.computePurchaseOrder(purchaseOrderMerged);
-
-    purchaseOrderRepo.save(purchaseOrderMerged);
-
-    super.removeOldPurchaseOrders(purchaseOrderList);
-
-    return purchaseOrderMerged;
+    List<Invoice> advancePaymentInvoiceList =
+        Beans.get(InvoiceRepository.class)
+            .all()
+            .filter(
+                "self.purchaseOrder.id = :purchaseOrderId AND self.operationSubTypeSelect = :operationSubTypeSelect AND self.operationTypeSelect = :operationTypeSelect")
+            .bind("purchaseOrderId", purchaseOrder.getId())
+            .bind("operationSubTypeSelect", InvoiceRepository.OPERATION_SUB_TYPE_ADVANCE)
+            .bind("operationTypeSelect", InvoiceRepository.OPERATION_TYPE_SUPPLIER_PURCHASE)
+            .fetch();
+    if (advancePaymentInvoiceList == null || advancePaymentInvoiceList.isEmpty()) {
+      return total;
+    }
+    for (Invoice advance : advancePaymentInvoiceList) {
+      BigDecimal advancePaymentAmount = advance.getAmountPaid();
+      advancePaymentAmount =
+          advancePaymentAmount.subtract(refundService.getRefundPaidAmount(advance));
+      total = total.add(advancePaymentAmount);
+    }
+    return total;
   }
 
   @Override
@@ -235,76 +161,23 @@ public class PurchaseOrderServiceSupplychainImpl extends PurchaseOrderServiceImp
         sumTimetableAmount = sumTimetableAmount.add(timetable.getAmount());
       }
     }
-    purchaseOrder.setAmountToBeSpreadOverTheTimetable(totalHT.subtract(sumTimetableAmount));
-  }
-
-  @Transactional
-  @Override
-  public void applyToallBudgetDistribution(PurchaseOrder purchaseOrder) {
-
-    for (PurchaseOrderLine purchaseOrderLine : purchaseOrder.getPurchaseOrderLineList()) {
-      BudgetDistribution newBudgetDistribution = new BudgetDistribution();
-      newBudgetDistribution.setAmount(purchaseOrderLine.getCompanyExTaxTotal());
-      newBudgetDistribution.setBudget(purchaseOrder.getBudget());
-      newBudgetDistribution.setPurchaseOrderLine(purchaseOrderLine);
-      Beans.get(BudgetDistributionRepository.class).save(newBudgetDistribution);
-      Beans.get(PurchaseOrderLineServiceSupplychainImpl.class)
-          .computeBudgetDistributionSumAmount(purchaseOrderLine, purchaseOrder);
-    }
+    purchaseOrder.setAmountToBeSpreadOverTheTimetable(
+        currencyScaleService.getScaledValue(
+            totalHT.subtract(sumTimetableAmount),
+            currencyScaleService.getCurrencyScale(purchaseOrder.getCurrency())));
   }
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
   public void requestPurchaseOrder(PurchaseOrder purchaseOrder) throws AxelorException {
-    if (!Beans.get(AppSupplychainService.class).isApp("supplychain")) {
+    if (!appSupplychainService.isApp("supplychain")) {
       super.requestPurchaseOrder(purchaseOrder);
       return;
     }
 
-    // budget control
-    if (appAccountService.isApp("budget")
-        && appAccountService.getAppBudget().getCheckAvailableBudget()) {
-      List<PurchaseOrderLine> purchaseOrderLines = purchaseOrder.getPurchaseOrderLineList();
-
-      Map<Budget, BigDecimal> amountPerBudget = new HashMap<>();
-      if (appAccountService.getAppBudget().getManageMultiBudget()) {
-        for (PurchaseOrderLine pol : purchaseOrderLines) {
-          if (pol.getBudgetDistributionList() != null) {
-            for (BudgetDistribution bd : pol.getBudgetDistributionList()) {
-              Budget budget = bd.getBudget();
-
-              if (!amountPerBudget.containsKey(budget)) {
-                amountPerBudget.put(budget, bd.getAmount());
-              } else {
-                BigDecimal oldAmount = amountPerBudget.get(budget);
-                amountPerBudget.put(budget, oldAmount.add(bd.getAmount()));
-              }
-
-              isBudgetExceeded(budget, amountPerBudget.get(budget));
-            }
-          }
-        }
-      } else {
-        for (PurchaseOrderLine pol : purchaseOrderLines) {
-          // getting Budget associated to POL
-          Budget budget = pol.getBudget();
-
-          if (!amountPerBudget.containsKey(budget)) {
-            amountPerBudget.put(budget, pol.getExTaxTotal());
-          } else {
-            BigDecimal oldAmount = amountPerBudget.get(budget);
-            amountPerBudget.put(budget, oldAmount.add(pol.getExTaxTotal()));
-          }
-
-          isBudgetExceeded(budget, amountPerBudget.get(budget));
-        }
-      }
-    }
     super.requestPurchaseOrder(purchaseOrder);
     int intercoPurchaseCreatingStatus =
-        Beans.get(AppSupplychainService.class)
-            .getAppSupplychain()
-            .getIntercoPurchaseCreatingStatusSelect();
+        appSupplychainService.getAppSupplychain().getIntercoPurchaseCreatingStatusSelect();
     if (purchaseOrder.getInterco()
         && intercoPurchaseCreatingStatus == PurchaseOrderRepository.STATUS_REQUESTED) {
       Beans.get(IntercoService.class).generateIntercoSaleFromPurchase(purchaseOrder);
@@ -332,141 +205,80 @@ public class PurchaseOrderServiceSupplychainImpl extends PurchaseOrderServiceImp
   }
 
   @Override
-  public void isBudgetExceeded(Budget budget, BigDecimal amount) throws AxelorException {
-    if (budget == null) {
-      return;
+  @Transactional(rollbackOn = {Exception.class})
+  public void updateToValidatedStatus(PurchaseOrder purchaseOrder) throws AxelorException {
+
+    if (purchaseOrder.getStatusSelect() == null
+        || purchaseOrder.getStatusSelect() != PurchaseOrderRepository.STATUS_FINISHED) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_INCONSISTENCY,
+          I18n.get(SupplychainExceptionMessage.PURCHASE_ORDER_RETURN_TO_VALIDATE_WRONG_STATUS));
     }
 
-    // getting BudgetLine of the period
-    BudgetLine bl = null;
-    for (BudgetLine budgetLine : budget.getBudgetLineList()) {
-      if (DateTool.isBetween(
-          budgetLine.getFromDate(),
-          budgetLine.getToDate(),
-          appAccountService.getTodayDate(budget.getCompany()))) {
-        bl = budgetLine;
-        break;
-      }
-    }
-
-    // checking budget excess
-    if (bl != null) {
-      if (amount.add(bl.getAmountCommitted()).compareTo(bl.getAmountExpected()) > 0) {
-        throw new AxelorException(
-            budget,
-            TraceBackRepository.CATEGORY_INCONSISTENCY,
-            I18n.get(IExceptionMessage.PURCHASE_ORDER_2),
-            budget.getCode());
-      }
-    }
-  }
-
-  @Override
-  public void setPurchaseOrderLineBudget(PurchaseOrder purchaseOrder) {
-
-    Budget budget = purchaseOrder.getBudget();
-    for (PurchaseOrderLine purchaseOrderLine : purchaseOrder.getPurchaseOrderLineList()) {
-      purchaseOrderLine.setBudget(budget);
-    }
-  }
-
-  @Override
-  @Transactional
-  public void updateToValidatedStatus(PurchaseOrder purchaseOrder) {
     purchaseOrder.setStatusSelect(PurchaseOrderRepository.STATUS_VALIDATED);
     purchaseOrderRepo.save(purchaseOrder);
   }
 
   @Override
-  public String createShipmentCostLine(PurchaseOrder purchaseOrder) throws AxelorException {
-    List<PurchaseOrderLine> purchaseOrderLines = purchaseOrder.getPurchaseOrderLineList();
-    ShipmentMode shipmentMode = purchaseOrder.getShipmentMode();
-    if (shipmentMode == null) {
+  public StockLocation getStockLocation(Partner supplierPartner, Company company)
+      throws AxelorException {
+    if (company == null) {
       return null;
     }
-    Product shippingCostProduct = shipmentMode.getShippingCostsProduct();
-    if (shipmentMode.getHasCarriagePaidPossibility()) {
-      BigDecimal carriagePaidThreshold = shipmentMode.getCarriagePaidThreshold();
-      if (computeExTaxTotalWithoutShippingLines(purchaseOrder).compareTo(carriagePaidThreshold)
-          >= 0) {
-        String message = removeShipmentCostLine(purchaseOrder);
-        this.computePurchaseOrder(purchaseOrder);
-        return message;
-      }
+    StockLocation stockLocation =
+        partnerStockSettingsService.getDefaultStockLocation(
+            supplierPartner, company, StockLocation::getUsableOnPurchaseOrder);
+    if (stockLocation == null) {
+      StockConfig stockConfig = stockConfigService.getStockConfig(company);
+      stockLocation = stockConfigService.getReceiptDefaultStockLocation(stockConfig);
     }
-    if (alreadyHasShippingCostLine(purchaseOrder, shippingCostProduct)) {
-      return null;
-    }
-    PurchaseOrderLine shippingCostLine = createShippingCostLine(purchaseOrder, shippingCostProduct);
-    purchaseOrderLines.add(shippingCostLine);
-    this.computePurchaseOrder(purchaseOrder);
-    return null;
+    return stockLocation;
   }
 
   @Override
-  public PurchaseOrderLine createShippingCostLine(
-      PurchaseOrder purchaseOrder, Product shippingCostProduct) throws AxelorException {
-    PurchaseOrderLine shippingCostLine = new PurchaseOrderLine();
-    shippingCostLine.setPurchaseOrder(purchaseOrder);
-    shippingCostLine.setProduct(shippingCostProduct);
-    purchaseOrderLineService.fill(shippingCostLine, purchaseOrder);
-    purchaseOrderLineService.compute(shippingCostLine, purchaseOrder);
-    return shippingCostLine;
-  }
-
-  @Override
-  public boolean alreadyHasShippingCostLine(
-      PurchaseOrder purchaseOrder, Product shippingCostProduct) {
-    List<PurchaseOrderLine> purchaseOrderLines = purchaseOrder.getPurchaseOrderLineList();
-    if (purchaseOrderLines == null) {
-      return false;
-    }
-    for (PurchaseOrderLine purchaseOrderLine : purchaseOrderLines) {
-      if (shippingCostProduct.equals(purchaseOrderLine.getProduct())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  @Override
-  @Transactional(rollbackOn = Exception.class)
-  public String removeShipmentCostLine(PurchaseOrder purchaseOrder) {
-    List<PurchaseOrderLine> purchaseOrderLines = purchaseOrder.getPurchaseOrderLineList();
-    if (purchaseOrderLines == null) {
+  public StockLocation getFromStockLocation(Partner supplierPartner, Company company)
+      throws AxelorException {
+    if (company == null) {
       return null;
     }
-    List<PurchaseOrderLine> linesToRemove = new ArrayList<PurchaseOrderLine>();
-    for (PurchaseOrderLine purchaseOrderLine : purchaseOrderLines) {
-      if (purchaseOrderLine.getProduct().getIsShippingCostsProduct()) {
-        linesToRemove.add(purchaseOrderLine);
-      }
+
+    StockLocation fromStockLocation =
+        partnerStockSettingsService.getDefaultExternalStockLocation(
+            supplierPartner, company, StockLocation::getUsableOnPurchaseOrder);
+    if (fromStockLocation == null) {
+      StockConfig stockConfig = stockConfigService.getStockConfig(company);
+      fromStockLocation = stockConfigService.getSupplierVirtualStockLocation(stockConfig);
     }
-    if (linesToRemove.size() == 0) {
-      return null;
-    }
-    for (PurchaseOrderLine lineToRemove : linesToRemove) {
-      purchaseOrderLines.remove(lineToRemove);
-      if (lineToRemove.getId() != null) {
-        purchaseOrderLineRepository.remove(lineToRemove);
-      }
-    }
-    purchaseOrder.setPurchaseOrderLineList(purchaseOrderLines);
-    return I18n.get("Carriage paid threshold is exceeded, all shipment cost lines are removed");
+    return fromStockLocation;
   }
 
   @Override
-  public BigDecimal computeExTaxTotalWithoutShippingLines(PurchaseOrder purchaseOrder) {
-    List<PurchaseOrderLine> purchaseOrderLines = purchaseOrder.getPurchaseOrderLineList();
-    if (purchaseOrderLines == null) {
-      return BigDecimal.ZERO;
+  public void checkAnalyticAxisByCompany(PurchaseOrder purchaseOrder) throws AxelorException {
+    if (purchaseOrder == null || ObjectUtils.isEmpty(purchaseOrder.getPurchaseOrderLineList())) {
+      return;
     }
-    BigDecimal exTaxTotal = BigDecimal.ZERO;
-    for (PurchaseOrderLine purchaseOrderLine : purchaseOrderLines) {
-      if (!purchaseOrderLine.getProduct().getIsShippingCostsProduct()) {
-        exTaxTotal = exTaxTotal.add(purchaseOrderLine.getExTaxTotal());
-      }
+
+    for (PurchaseOrderLine purchaseOrderLine : purchaseOrder.getPurchaseOrderLineList()) {
+      AnalyticLineModel analyticLineModel = new AnalyticLineModel(purchaseOrderLine, purchaseOrder);
+      analyticLineModelService.checkRequiredAxisByCompany(analyticLineModel);
     }
-    return exTaxTotal;
+  }
+
+  @Override
+  @Transactional(rollbackOn = {Exception.class})
+  public void enableEditOrder(PurchaseOrder purchaseOrder) throws AxelorException {
+    super.enableEditOrder(purchaseOrder);
+    purchaseOrderEditStockMoveService.cancelStockMoves(purchaseOrder);
+  }
+
+  @Override
+  @Transactional(rollbackOn = {Exception.class})
+  public void validateChanges(PurchaseOrder purchaseOrder) throws AxelorException {
+    super.validateChanges(purchaseOrder);
+    if (!appSupplychainService.isApp("supplychain")) {
+      return;
+    }
+
+    purchaseOrderChangeValidationSupplychainService.validatePurchaseOrderChange(purchaseOrder);
   }
 }

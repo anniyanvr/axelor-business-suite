@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,34 +14,47 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.supplychain.service.app;
 
-import com.axelor.apps.base.db.AppSupplychain;
 import com.axelor.apps.base.db.Company;
-import com.axelor.apps.base.db.repo.AppSupplychainRepository;
 import com.axelor.apps.base.db.repo.CompanyRepository;
 import com.axelor.apps.base.service.app.AppBaseServiceImpl;
 import com.axelor.apps.supplychain.db.SupplyChainConfig;
 import com.axelor.apps.supplychain.db.repo.SupplyChainConfigRepository;
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
+import com.axelor.studio.app.service.AppService;
+import com.axelor.studio.db.AppSupplychain;
+import com.axelor.studio.db.repo.AppSupplychainRepository;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.util.List;
 
 @Singleton
 public class AppSupplychainServiceImpl extends AppBaseServiceImpl implements AppSupplychainService {
 
-  @Inject private AppSupplychainRepository appSupplychainRepo;
+  protected AppSupplychainRepository appSupplychainRepo;
 
-  @Inject private CompanyRepository companyRepo;
+  protected CompanyRepository companyRepo;
 
-  @Inject private SupplyChainConfigRepository supplyChainConfigRepo;
+  protected SupplyChainConfigRepository supplyChainConfigRepo;
+
+  @Inject
+  public AppSupplychainServiceImpl(
+      AppService appService,
+      AppSupplychainRepository appSupplychainRepo,
+      CompanyRepository companyRepo,
+      SupplyChainConfigRepository supplyChainConfigRepo) {
+    super(appService);
+    this.appSupplychainRepo = appSupplychainRepo;
+    this.companyRepo = companyRepo;
+    this.supplyChainConfigRepo = supplyChainConfigRepo;
+  }
 
   @Override
   public AppSupplychain getAppSupplychain() {
-    return appSupplychainRepo.all().fetchOne();
+    return appSupplychainRepo.all().cacheable().autoFlush(false).fetchOne();
   }
 
   @Override

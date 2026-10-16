@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,30 +14,29 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.report.engine;
 
 import com.axelor.app.AppSettings;
+import com.axelor.app.AvailableAppSettings;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.service.PartnerServiceImpl;
-import com.axelor.apps.base.service.app.AppService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.apps.base.service.user.UserService;
-import com.axelor.apps.tool.StringTool;
 import com.axelor.db.Model;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.inject.Beans;
 import com.axelor.meta.MetaFiles;
+import com.axelor.utils.helpers.StringHelper;
+import com.axelor.utils.helpers.file.PdfHelper;
 import com.google.common.collect.Maps;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
 import java.lang.invoke.MethodHandles;
-import java.net.URLEncoder;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
@@ -100,17 +100,7 @@ public class ReportSettings {
       return null;
     }
 
-    String fileLink = "ws/files/report/" + output.getName();
-
-    try {
-      fileLink += "?name=" + URLEncoder.encode(fileName, "UTF-8");
-    } catch (UnsupportedEncodingException e) {
-      logger.error(e.getLocalizedMessage());
-    }
-
-    logger.debug("URL : {}", fileLink);
-
-    return fileLink;
+    return PdfHelper.getFileLinkFromPdfFile(output, fileName);
   }
 
   public String getOutputName() {
@@ -142,7 +132,7 @@ public class ReportSettings {
             .replace("${date}", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")))
             .replace("${time}", LocalDateTime.now().format(DateTimeFormatter.ofPattern("HHmmss")));
 
-    this.outputName = StringTool.getFilename(this.outputName);
+    this.outputName = StringHelper.getFilename(this.outputName);
   }
 
   protected void computeFileName() {
@@ -212,12 +202,12 @@ public class ReportSettings {
         .addParam("Password", appSettings.get("db.default.password"));
   }
 
-  private ReportSettings addAttachmentPath() {
+  protected ReportSettings addAttachmentPath() {
 
     String attachmentPath = null;
     try {
-      attachmentPath = AppService.getFileUploadDir();
-    } catch (AxelorException e) {
+      attachmentPath = AppSettings.get().get(AvailableAppSettings.DATA_UPLOAD_DIR);
+    } catch (Exception e) {
       TraceBackService.trace(e);
     }
     if (attachmentPath == null) {
@@ -249,9 +239,9 @@ public class ReportSettings {
   public static String getPrintingLocale(Partner partner) {
 
     if (partner != null) {
-      return Beans.get(PartnerServiceImpl.class).getPartnerLanguageCode(partner);
+      return Beans.get(PartnerServiceImpl.class).getPartnerLocale(partner);
     } else {
-      return Beans.get(UserService.class).getLanguage();
+      return Beans.get(UserService.class).getLocalizationCode();
     }
   }
 

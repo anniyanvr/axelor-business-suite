@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,18 +14,18 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.imports;
 
-import com.axelor.apps.base.exceptions.IExceptionMessage;
+import com.axelor.apps.base.AxelorException;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.imports.importer.ExcelToCSV;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
 import com.axelor.i18n.I18n;
 import com.axelor.meta.MetaFiles;
 import com.axelor.meta.db.MetaFile;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -37,6 +38,7 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -64,7 +66,7 @@ public class ConvertDemoDataFileServiceImpl implements ConvertDemoDataFileServic
     return metaFile;
   }
 
-  private File createZIPFromExcel(File excelFile)
+  protected File createZIPFromExcel(File excelFile)
       throws IOException, ParseException, AxelorException {
 
     Workbook workBook = new XSSFWorkbook(new FileInputStream(excelFile));
@@ -83,7 +85,7 @@ public class ConvertDemoDataFileServiceImpl implements ConvertDemoDataFileServic
         if (entries.contains(csvFile.getName())) {
           throw new AxelorException(
               TraceBackRepository.CATEGORY_INCONSISTENCY,
-              I18n.get(IExceptionMessage.DUPLICATE_CSV_FILE_NAME_EXISTS));
+              I18n.get(BaseExceptionMessage.DUPLICATE_CSV_FILE_NAME_EXISTS));
         }
         entries.add(csvFile.getName());
 
@@ -99,7 +101,7 @@ public class ConvertDemoDataFileServiceImpl implements ConvertDemoDataFileServic
     return zipFile;
   }
 
-  private void writeToZip(File csvFile, ZipOutputStream zos) throws IOException {
+  protected void writeToZip(File csvFile, ZipOutputStream zos) throws IOException {
     try (FileInputStream fis = new FileInputStream(csvFile)) {
       zos.putNextEntry(new ZipEntry(csvFile.getName()));
       byte[] buffer = new byte[1024];
@@ -112,25 +114,25 @@ public class ConvertDemoDataFileServiceImpl implements ConvertDemoDataFileServic
     }
   }
 
-  private String getFileNameFromSheet(Sheet sheet) throws AxelorException {
+  protected String getFileNameFromSheet(Sheet sheet) throws AxelorException {
     String fileName = "";
     Row fileNameRow = sheet.getRow(1);
     if (fileNameRow != null) {
       Cell fileNameCell = fileNameRow.getCell(0);
       if (fileNameCell != null
-          && fileNameCell.getCellType() != Cell.CELL_TYPE_BLANK
-          && fileNameCell.getCellType() == Cell.CELL_TYPE_STRING) {
+          && fileNameCell.getCellType() != CellType.BLANK
+          && fileNameCell.getCellType() == CellType.STRING) {
 
         fileName = fileNameCell.getStringCellValue() + ".csv";
       } else {
         throw new AxelorException(
             TraceBackRepository.CATEGORY_MISSING_FIELD,
-            I18n.get(IExceptionMessage.CSV_FILE_NAME_NOT_EXISTS));
+            I18n.get(BaseExceptionMessage.CSV_FILE_NAME_NOT_EXISTS));
       }
     } else {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_INCONSISTENCY,
-          I18n.get(IExceptionMessage.EXCEL_FILE_FORMAT_ERROR));
+          I18n.get(BaseExceptionMessage.EXCEL_FILE_FORMAT_ERROR));
     }
     return fileName;
   }

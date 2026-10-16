@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,123 +14,132 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.hr.service.employee;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Company;
 import com.axelor.apps.base.db.EventsPlanning;
 import com.axelor.apps.base.db.Partner;
+import com.axelor.apps.base.db.PrintingTemplate;
 import com.axelor.apps.base.db.WeeklyPlanning;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.exceptions.BaseExceptionMessage;
 import com.axelor.apps.base.service.app.AppBaseService;
-import com.axelor.apps.base.service.user.UserServiceImpl;
+import com.axelor.apps.base.service.publicHoliday.PublicHolidayService;
+import com.axelor.apps.base.service.user.UserService;
 import com.axelor.apps.base.service.weeklyplanning.WeeklyPlanningService;
 import com.axelor.apps.hr.db.DPAE;
 import com.axelor.apps.hr.db.Employee;
 import com.axelor.apps.hr.db.EmploymentContract;
 import com.axelor.apps.hr.db.HRConfig;
-import com.axelor.apps.hr.db.LeaveRequest;
 import com.axelor.apps.hr.db.repo.EmployeeRepository;
-import com.axelor.apps.hr.db.repo.LeaveRequestRepository;
-import com.axelor.apps.hr.exception.IExceptionMessage;
-import com.axelor.apps.hr.service.leave.LeaveService;
-import com.axelor.apps.hr.service.publicHoliday.PublicHolidayHrService;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
+import com.axelor.apps.hr.exception.HumanResourceExceptionMessage;
+import com.axelor.apps.hr.service.config.HRConfigService;
+import com.axelor.auth.AuthUtils;
+import com.axelor.auth.db.User;
+import com.axelor.common.ObjectUtils;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Period;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
-public class EmployeeServiceImpl extends UserServiceImpl implements EmployeeService {
+public class EmployeeServiceImpl implements EmployeeService {
 
-  @Inject protected WeeklyPlanningService weeklyPlanningService;
+  protected WeeklyPlanningService weeklyPlanningService;
+  protected HRConfigService hrConfigService;
+  protected AppBaseService appBaseService;
+  protected EmployeeRepository employeeRepository;
+  protected UserService userService;
 
-  public int getLengthOfService(Employee employee, LocalDate refDate) throws AxelorException {
-
-    try {
-      Period period =
-          Period.between(
-              employee.getSeniorityDate(),
-              refDate == null
-                  ? Beans.get(AppBaseService.class)
-                      .getTodayDate(
-                          employee.getUser() != null ? employee.getUser().getActiveCompany() : null)
-                  : refDate);
-      return period.getYears();
-    } catch (IllegalArgumentException e) {
-      throw new AxelorException(
-          e.getCause(),
-          employee,
-          TraceBackRepository.CATEGORY_NO_VALUE,
-          I18n.get(IExceptionMessage.EMPLOYEE_NO_SENIORITY_DATE),
-          employee.getName());
-    }
+  @Inject
+  public EmployeeServiceImpl(
+      WeeklyPlanningService weeklyPlanningService,
+      HRConfigService hrConfigService,
+      AppBaseService appBaseService,
+      EmployeeRepository employeeRepository,
+      UserService userService) {
+    this.weeklyPlanningService = weeklyPlanningService;
+    this.hrConfigService = hrConfigService;
+    this.appBaseService = appBaseService;
+    this.employeeRepository = employeeRepository;
+    this.userService = userService;
   }
 
-  public int getAge(Employee employee, LocalDate refDate) throws AxelorException {
-
-    try {
-      Period period =
-          Period.between(
-              employee.getBirthDate(),
-              refDate == null
-                  ? Beans.get(AppBaseService.class)
-                      .getTodayDate(
-                          employee.getUser() != null ? employee.getUser().getActiveCompany() : null)
-                  : refDate);
-      return period.getYears();
-    } catch (IllegalArgumentException e) {
+  @Override
+  public int getLengthOfService(Employee employee, LocalDate refDate) throws AxelorException {
+    if (employee.getSeniorityDate() == null) {
       throw new AxelorException(
-          e.getCause(),
           employee,
           TraceBackRepository.CATEGORY_NO_VALUE,
-          I18n.get(IExceptionMessage.EMPLOYEE_NO_BIRTH_DATE),
+          I18n.get(HumanResourceExceptionMessage.EMPLOYEE_NO_SENIORITY_DATE),
           employee.getName());
     }
+    return getYears(employee.getUser(), employee.getSeniorityDate(), refDate);
+  }
+
+  @Override
+  public int getAge(Employee employee, LocalDate refDate) throws AxelorException {
+    if (employee.getBirthDate() == null) {
+      throw new AxelorException(
+          employee,
+          TraceBackRepository.CATEGORY_NO_VALUE,
+          I18n.get(HumanResourceExceptionMessage.EMPLOYEE_NO_BIRTH_DATE),
+          employee.getName());
+    }
+    return getYears(employee.getUser(), employee.getBirthDate(), refDate);
+  }
+
+  protected int getYears(User user, LocalDate fromDate, LocalDate toDate) {
+    if (toDate == null) {
+      toDate =
+          appBaseService.getTodayDate(
+              Optional.ofNullable(user).map(User::getActiveCompany).orElse(null));
+    }
+    return Period.between(fromDate, toDate).getYears();
   }
 
   @Override
   public BigDecimal getDaysWorksInPeriod(Employee employee, LocalDate fromDate, LocalDate toDate)
       throws AxelorException {
-    Company company = employee.getMainEmploymentContract().getPayCompany();
     BigDecimal duration = BigDecimal.ZERO;
 
+    Company company =
+        Optional.ofNullable(employee.getMainEmploymentContract())
+            .map(EmploymentContract::getPayCompany)
+            .orElse(null);
+
     WeeklyPlanning weeklyPlanning = employee.getWeeklyPlanning();
-    if (weeklyPlanning == null) {
-      HRConfig conf = company.getHrConfig();
-      if (conf != null) {
-        weeklyPlanning = conf.getWeeklyPlanning();
-      }
+    if (weeklyPlanning == null && company != null) {
+      weeklyPlanning = company.getWeeklyPlanning();
     }
 
     if (weeklyPlanning == null) {
       throw new AxelorException(
           employee,
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.EMPLOYEE_PLANNING),
+          I18n.get(HumanResourceExceptionMessage.EMPLOYEE_PLANNING),
           employee.getName());
     }
 
     EventsPlanning publicHolidayPlanning = employee.getPublicHolidayEventsPlanning();
-    if (publicHolidayPlanning == null) {
-      HRConfig conf = company.getHrConfig();
-      if (conf != null) {
-        publicHolidayPlanning = conf.getPublicHolidayEventsPlanning();
-      }
+    if (publicHolidayPlanning == null && company != null) {
+      publicHolidayPlanning = company.getPublicHolidayEventsPlanning();
     }
 
     if (publicHolidayPlanning == null) {
       throw new AxelorException(
           employee,
           TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
-          I18n.get(IExceptionMessage.EMPLOYEE_PUBLIC_HOLIDAY),
+          I18n.get(HumanResourceExceptionMessage.EMPLOYEE_PUBLIC_HOLIDAY),
           employee.getName());
     }
 
@@ -144,38 +154,13 @@ public class EmployeeServiceImpl extends UserServiceImpl implements EmployeeServ
 
     duration =
         duration.subtract(
-            Beans.get(PublicHolidayHrService.class)
+            Beans.get(PublicHolidayService.class)
                 .computePublicHolidayDays(fromDate, toDate, weeklyPlanning, publicHolidayPlanning));
 
     return duration;
   }
 
   @Override
-  public BigDecimal getDaysWorkedInPeriod(Employee employee, LocalDate fromDate, LocalDate toDate)
-      throws AxelorException {
-    BigDecimal daysWorks = getDaysWorksInPeriod(employee, fromDate, toDate);
-
-    BigDecimal daysLeave = BigDecimal.ZERO;
-    List<LeaveRequest> leaveRequestList =
-        Beans.get(LeaveRequestRepository.class)
-            .all()
-            .filter(
-                "self.user = ?1 AND self.duration >= 1 AND self.statusSelect = ?2 AND (self.fromDateT BETWEEN ?3 AND ?4 OR self.toDateT BETWEEN ?3 AND ?4 OR ?3 BETWEEN self.fromDateT AND self.toDateT OR ?4 BETWEEN self.fromDateT AND self.toDateT)",
-                employee.getUser(),
-                LeaveRequestRepository.STATUS_VALIDATED,
-                fromDate,
-                toDate)
-            .fetch();
-
-    for (LeaveRequest leaveRequest : leaveRequestList) {
-      daysLeave =
-          daysLeave.add(
-              Beans.get(LeaveService.class).computeDuration(leaveRequest, fromDate, toDate));
-    }
-
-    return daysWorks.subtract(daysLeave);
-  }
-
   public Map<String, String> getSocialNetworkUrl(String name, String firstName) {
 
     Map<String, String> urlMap = new HashMap<>();
@@ -186,25 +171,33 @@ public class EmployeeServiceImpl extends UserServiceImpl implements EmployeeServ
     name = name == null ? "" : name;
     urlMap.put(
         "facebook",
-        "<a class='fa fa-facebook' href='https://www.facebook.com/search/more/?q="
+        "<a href='https://www.facebook.com/search/more/?q="
             + name
             + "&init=public"
-            + "' target='_blank'/>");
+            + "' target='_blank' >"
+            + "<img src='img/social/facebook.svg'/>"
+            + "</a>");
     urlMap.put(
         "twitter",
-        "<a class='fa fa-twitter' href='https://twitter.com/search?q="
+        "<a href='https://x.com/search?q="
             + name
-            + "' target='_blank' />");
+            + "' target='_blank' >"
+            + "<img src='img/social/twitter-x.svg'/>"
+            + "</a>");
     urlMap.put(
         "linkedin",
-        "<a class='fa fa-linkedin' href='http://www.linkedin.com/pub/dir/"
+        "<a href='http://www.linkedin.com/pub/dir/"
             + name.replace("+", "/")
-            + "' target='_blank' />");
+            + "' target='_blank' >"
+            + "<img src='img/social/linkedin.svg'/>"
+            + "</a>");
     urlMap.put(
         "youtube",
-        "<a class='fa fa-youtube' href='https://www.youtube.com/results?search_query="
+        "<a href='https://www.youtube.com/results?search_query="
             + name
-            + "' target='_blank' />");
+            + "' target='_blank' >"
+            + "<img src='img/social/youtube.svg'/>"
+            + "</a>");
 
     return urlMap;
   }
@@ -216,7 +209,7 @@ public class EmployeeServiceImpl extends UserServiceImpl implements EmployeeServ
     if (mainEmploymentContract == null) {
       throw new AxelorException(
           TraceBackRepository.CATEGORY_MISSING_FIELD,
-          I18n.get(IExceptionMessage.EMPLOYEE_CONTRACT_OF_EMPLOYMENT),
+          I18n.get(HumanResourceExceptionMessage.EMPLOYEE_CONTRACT_OF_EMPLOYMENT),
           employee.getName());
     }
 
@@ -259,5 +252,85 @@ public class EmployeeServiceImpl extends UserServiceImpl implements EmployeeServ
 
     Beans.get(EmployeeRepository.class).save(employee);
     return newDPAE.getId();
+  }
+
+  @Override
+  public User getUser(Employee employee) throws AxelorException {
+
+    User user = employee.getUser();
+    if (user != null) {
+      return user;
+    }
+    throw new AxelorException(
+        TraceBackRepository.CATEGORY_NO_VALUE,
+        I18n.get(HumanResourceExceptionMessage.NO_USER_FOR_EMPLOYEE),
+        employee.getName());
+  }
+
+  @Override
+  public Employee getEmployee(User user) throws AxelorException {
+    Objects.requireNonNull(user);
+
+    if (user.getEmployee() == null) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(HumanResourceExceptionMessage.LEAVE_USER_EMPLOYEE),
+          user.getName());
+    }
+    return user.getEmployee();
+  }
+
+  @Override
+  public Employee getConnectedEmployee() throws AxelorException {
+
+    return getEmployee(AuthUtils.getUser());
+  }
+
+  @Override
+  public PrintingTemplate getAnnualReportPrintingTemplate(Employee employee)
+      throws AxelorException {
+    Company company = getUser(employee).getActiveCompany();
+    PrintingTemplate employeeAnnualReportPrintTemplate = null;
+    if (ObjectUtils.notEmpty(company)) {
+      HRConfig hrConfig = hrConfigService.getHRConfig(company);
+      employeeAnnualReportPrintTemplate = hrConfig.getEmployeeAnnualReportPrintTemplate();
+    }
+
+    if (ObjectUtils.isEmpty(employeeAnnualReportPrintTemplate)) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(BaseExceptionMessage.TEMPLATE_CONFIG_NOT_FOUND));
+    }
+    return employeeAnnualReportPrintTemplate;
+  }
+
+  @Override
+  public PrintingTemplate getEmpPhoneBookPrintingTemplate() throws AxelorException {
+    Company company = userService.getUser().getActiveCompany();
+    PrintingTemplate employeePhoneBookPrintTemplate = null;
+    if (ObjectUtils.notEmpty(company)) {
+      HRConfig hrConfig = hrConfigService.getHRConfig(company);
+      employeePhoneBookPrintTemplate = hrConfig.getEmployeePhoneBookPrintTemplate();
+    }
+
+    if (ObjectUtils.isEmpty(employeePhoneBookPrintTemplate)) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_CONFIGURATION_ERROR,
+          I18n.get(BaseExceptionMessage.TEMPLATE_CONFIG_NOT_FOUND));
+    }
+    return employeePhoneBookPrintTemplate;
+  }
+
+  @Override
+  public Company getDefaultCompany(Employee employee) {
+    if (employee != null) {
+      employee = employeeRepository.find(employee.getId());
+      if (employee.getMainEmploymentContract() != null) {
+        return employee.getMainEmploymentContract().getPayCompany();
+      } else if (employee.getUser() != null) {
+        return employee.getUser().getActiveCompany();
+      }
+    }
+    return null;
   }
 }

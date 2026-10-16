@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,27 +14,24 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.base.service.advancedExport;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.AdvancedExport;
 import com.axelor.apps.base.db.AdvancedExportLine;
 import com.axelor.apps.base.db.repo.AdvancedExportRepository;
-import com.axelor.apps.tool.NamingTool;
-import com.axelor.apps.tool.StringTool;
+import com.axelor.apps.base.db.repo.TraceBackRepository;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
-import com.axelor.common.StringUtils;
 import com.axelor.db.JPA;
 import com.axelor.db.JpaSecurity;
 import com.axelor.db.Model;
 import com.axelor.db.hibernate.type.JsonFunction;
 import com.axelor.db.mapper.Mapper;
 import com.axelor.db.mapper.Property;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.db.repo.TraceBackRepository;
-import com.axelor.exception.service.TraceBackService;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
 import com.axelor.meta.db.MetaField;
@@ -43,11 +41,13 @@ import com.axelor.meta.db.repo.MetaFieldRepository;
 import com.axelor.meta.db.repo.MetaModelRepository;
 import com.axelor.meta.db.repo.MetaSelectRepository;
 import com.axelor.rpc.filter.Filter;
+import com.axelor.utils.helpers.NamingHelper;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
+import jakarta.persistence.Query;
 import java.io.File;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -57,8 +57,6 @@ import java.util.Optional;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.persistence.Query;
-import org.apache.commons.collections4.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,13 +64,13 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
 
   private static final Logger log = LoggerFactory.getLogger(AdvancedExportServiceImpl.class);
 
-  @Inject private MetaFieldRepository metaFieldRepo;
+  @Inject protected MetaFieldRepository metaFieldRepo;
 
-  @Inject private MetaModelRepository metaModelRepo;
+  @Inject protected MetaModelRepository metaModelRepo;
 
-  @Inject private MetaSelectRepository metaSelectRepo;
+  @Inject protected MetaSelectRepository metaSelectRepo;
 
-  @Inject private AdvancedExportGeneratorFactory exportGeneratorFactory;
+  @Inject protected AdvancedExportGeneratorFactory exportGeneratorFactory;
 
   private LinkedHashSet<String> joinFieldSet = new LinkedHashSet<>(),
       selectionJoinFieldSet = new LinkedHashSet<>();
@@ -107,15 +105,9 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     msi = 0;
     mt = 0;
     int col = 0;
-    language = Optional.ofNullable(AuthUtils.getUser()).map(User::getLanguage).orElse(null);
+    language = getAdvancedExportLanguage(advancedExport);
 
     try {
-      if (language == null) {
-        throw new AxelorException(
-            TraceBackRepository.CATEGORY_MISSING_FIELD,
-            I18n.get("Please select a language on user form."));
-      }
-
       for (AdvancedExportLine advancedExportLine : advancedExport.getAdvancedExportLineList()) {
         String[] splitField = advancedExportLine.getTargetField().split("\\.");
         String alias = "Col_" + col;
@@ -131,15 +123,31 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
         aliasName = "";
         col++;
       }
-      if (StringUtils.notEmpty(orderByFieldBuilder)) {
-        orderByFieldBuilder.append("self.id asc,");
-      }
+      orderByFieldBuilder.append("self.id asc,");
+
     } catch (ClassNotFoundException e) {
       TraceBackService.trace(e);
       throw new AxelorException(e, TraceBackRepository.CATEGORY_CONFIGURATION_ERROR);
     }
     return createQuery(
         createQueryBuilder(advancedExport, selectFieldBuilder, recordIds, orderByFieldBuilder));
+  }
+
+  protected String getAdvancedExportLanguage(AdvancedExport advancedExport) throws AxelorException {
+    String language = getExportLanguage(advancedExport);
+    if (Strings.isNullOrEmpty(language)) {
+      throw new AxelorException(
+          TraceBackRepository.CATEGORY_MISSING_FIELD,
+          I18n.get("Please select a language on advanced export or user form."));
+    }
+    return language;
+  }
+
+  protected String getExportLanguage(AdvancedExport advancedExport) {
+    if (!Strings.isNullOrEmpty(advancedExport.getLanguage())) {
+      return advancedExport.getLanguage();
+    }
+    return Optional.ofNullable(AuthUtils.getUser()).map(User::getLanguage).orElse(null);
   }
 
   /**
@@ -150,7 +158,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
    * @param metaModel
    * @throws ClassNotFoundException
    */
-  private void createQueryParts(String[] splitField, int parentIndex, MetaModel metaModel)
+  protected void createQueryParts(String[] splitField, int parentIndex, MetaModel metaModel)
       throws ClassNotFoundException {
 
     while (parentIndex <= splitField.length - 1) {
@@ -173,7 +181,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     }
   }
 
-  private void checkRelationalField(String[] splitField, int parentIndex) {
+  protected void checkRelationalField(String[] splitField, int parentIndex) {
     String tempAliasName = "";
     isNormalField = false;
     if (parentIndex != 0) {
@@ -183,6 +191,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
       for (int subIndex = 1; subIndex <= parentIndex; subIndex++) {
         tempAliasName = isKeyword(splitField, subIndex);
         if (!aliasName.equals(splitField[parentIndex])) {
+          tempAliasName = aliasName + "_" + tempAliasName;
           joinFieldSet.add(
               "LEFT JOIN " + aliasName + "." + splitField[subIndex] + " " + tempAliasName);
           aliasName = tempAliasName;
@@ -195,25 +204,22 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     }
   }
 
-  private String isKeyword(String[] fieldNames, int ind) {
-    if (NamingTool.isKeyword(fieldNames[ind])) {
+  protected String isKeyword(String[] fieldNames, int ind) {
+    if (NamingHelper.isKeyword(fieldNames[ind])) {
       return fieldNames[ind] + "_id";
     }
     return fieldNames[ind];
   }
 
-  private void checkSelectionField(String[] fieldName, int index, MetaModel metaModel)
+  protected void checkSelectionField(String[] fieldName, int index, MetaModel metaModel)
       throws ClassNotFoundException {
 
     Class<?> klass = Class.forName(metaModel.getFullName());
     Mapper mapper = Mapper.of(klass);
-    List<MetaSelect> metaSelectList =
-        metaSelectRepo
-            .all()
-            .filter("self.name = ?", mapper.getProperty(fieldName[index]).getSelection())
-            .fetch();
+    MetaSelect metaSelect =
+        metaSelectRepo.findByName(mapper.getProperty(fieldName[index]).getSelection());
 
-    if (CollectionUtils.isNotEmpty(metaSelectList)) {
+    if (metaSelect != null) {
       isSelectionField = true;
       String alias = "self";
       msi++;
@@ -221,11 +227,11 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
       if (!isNormalField && index != 0) {
         alias = aliasName;
       }
-      addSelectionField(fieldName[index], alias, StringTool.getIdListString(metaSelectList));
+      addSelectionField(fieldName[index], alias, String.valueOf(metaSelect.getId()));
     }
   }
 
-  private void addSelectionField(String fieldName, String alias, String metaSelectIds) {
+  protected void addSelectionField(String fieldName, String alias, String metaSelectIds) {
     String selectionJoin =
         "LEFT JOIN "
             + "MetaSelectItem "
@@ -238,7 +244,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
             + ("msi_" + (msi))
             + ".value AND "
             + ("msi_" + (msi))
-            + ".select IN ("
+            + ".select.id IN ("
             + metaSelectIds
             + ")";
 
@@ -260,7 +266,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     selectionJoinFieldSet.add(selectionJoin);
   }
 
-  private void checkNormalField(String[] splitField, int parentIndex) {
+  protected void checkNormalField(String[] splitField, int parentIndex) {
 
     if (isSelectionField) {
       if (parentIndex == 0) {
@@ -301,7 +307,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
    * @param orderByFieldBuilder
    * @return
    */
-  private StringBuilder createQueryBuilder(
+  protected StringBuilder createQueryBuilder(
       AdvancedExport advancedExport,
       StringBuilder selectFieldBuilder,
       List<Long> recordIds,
@@ -328,8 +334,10 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     queryBuilder.append(
         (!Strings.isNullOrEmpty(selectionJoinField)) ? selectionJoinField + " " : "");
     queryBuilder.append((!Strings.isNullOrEmpty(criteria)) ? criteria : "");
-    if (!advancedExport.getIncludeArchivedRecords()) {
-      queryBuilder.append("WHERE self.archived = 'f' OR self.archived IS NULL");
+    if (!advancedExport.getIncludeArchivedRecords() && Strings.isNullOrEmpty(criteria)) {
+      queryBuilder.append("WHERE self.archived = false OR self.archived IS NULL");
+    } else if (!advancedExport.getIncludeArchivedRecords() && !Strings.isNullOrEmpty(criteria)) {
+      queryBuilder.append(" AND (self.archived = false OR self.archived IS NULL)");
     }
     queryBuilder.append((!Strings.isNullOrEmpty(orderByCol)) ? orderByCol : "");
 
@@ -343,7 +351,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
    * @param criteria
    * @return
    */
-  private String getCriteria(MetaModel metaModel, List<Long> recordIds) {
+  protected String getCriteria(MetaModel metaModel, List<Long> recordIds) {
     String criteria = null;
     if (recordIds != null) {
       criteria = recordIds.toString().substring(1, recordIds.toString().length() - 1);
@@ -390,7 +398,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
     return null;
   }
 
-  private Query createQuery(StringBuilder queryBuilder) {
+  protected Query createQuery(StringBuilder queryBuilder) {
     int n = 0, i = queryBuilder.indexOf("?");
     while (i > -1) {
       queryBuilder.replace(i, i + 1, "?" + (++n));
@@ -495,7 +503,7 @@ public class AdvancedExportServiceImpl implements AdvancedExportService {
      * @param filter the filter expression
      * @return the transformed filter expression
      */
-    private String parse(String filter) {
+    protected String parse(String filter) {
 
       String result = "";
       Matcher matcher = pathPattern.matcher(filter);

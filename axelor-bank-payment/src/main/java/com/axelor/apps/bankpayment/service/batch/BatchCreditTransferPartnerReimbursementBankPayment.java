@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,37 +14,33 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.bankpayment.service.batch;
 
 import com.axelor.apps.account.db.AccountingBatch;
 import com.axelor.apps.account.db.Reimbursement;
 import com.axelor.apps.account.db.repo.AccountingBatchRepository;
+import com.axelor.apps.account.db.repo.PaymentModeRepository;
 import com.axelor.apps.account.db.repo.ReimbursementRepository;
 import com.axelor.apps.account.service.ReimbursementExportService;
-import com.axelor.apps.account.service.app.AppAccountService;
 import com.axelor.apps.account.service.batch.BatchCreditTransferPartnerReimbursement;
 import com.axelor.apps.bankpayment.db.BankOrder;
 import com.axelor.apps.bankpayment.db.BankOrderLine;
 import com.axelor.apps.bankpayment.db.repo.BankOrderRepository;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderCreateService;
 import com.axelor.apps.bankpayment.service.bankorder.BankOrderLineService;
-import com.axelor.apps.bankpayment.service.bankorder.BankOrderService;
+import com.axelor.apps.bankpayment.service.bankorder.BankOrderValidationService;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.repo.PartnerRepository;
 import com.axelor.apps.base.service.PartnerService;
+import com.axelor.apps.base.service.exception.TraceBackService;
 import com.axelor.db.Query;
-import com.axelor.exception.AxelorException;
-import com.axelor.exception.service.TraceBackService;
-import com.axelor.inject.Beans;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
-import java.io.IOException;
+import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDate;
 import java.util.List;
-import javax.xml.bind.JAXBException;
-import javax.xml.datatype.DatatypeConfigurationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,31 +49,31 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
   private static final Logger logger =
       LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  protected AppAccountService appAccountService;
-  protected ReimbursementRepository reimbursementRepo;
+  protected ReimbursementRepository reimbursementRepository;
   protected BankOrderCreateService bankOrderCreateService;
-  protected BankOrderService bankOrderService;
   protected BankOrderLineService bankOrderLineService;
-  protected BankOrderRepository bankOrderRepo;
+  protected BankOrderRepository bankOrderRepository;
+  protected AccountingBatchRepository accountingBatchRepository;
+  protected BankOrderValidationService bankOrderValidationService;
 
   @Inject
   public BatchCreditTransferPartnerReimbursementBankPayment(
-      PartnerRepository partnerRepo,
+      PartnerRepository partnerRepository,
       PartnerService partnerService,
       ReimbursementExportService reimbursementExportService,
-      AppAccountService appAccountService,
-      ReimbursementRepository reimbursementRepo,
+      ReimbursementRepository reimbursementRepository,
       BankOrderCreateService bankOrderCreateService,
-      BankOrderService bankOrderService,
+      BankOrderValidationService bankOrderValidationService,
       BankOrderLineService bankOrderLineService,
-      BankOrderRepository bankOrderRepo) {
-    super(partnerRepo, partnerService, reimbursementExportService);
-    this.appAccountService = appAccountService;
-    this.reimbursementRepo = reimbursementRepo;
+      BankOrderRepository bankOrderRepository,
+      AccountingBatchRepository accountingBatchRepository) {
+    super(partnerRepository, partnerService, reimbursementExportService);
+    this.reimbursementRepository = reimbursementRepository;
     this.bankOrderCreateService = bankOrderCreateService;
-    this.bankOrderService = bankOrderService;
+    this.bankOrderValidationService = bankOrderValidationService;
     this.bankOrderLineService = bankOrderLineService;
-    this.bankOrderRepo = bankOrderRepo;
+    this.bankOrderRepository = bankOrderRepository;
+    this.accountingBatchRepository = accountingBatchRepository;
   }
 
   @Override
@@ -90,7 +87,7 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
 
     // Fetch all reimbursements that are validated for the specified company.
     Query<Reimbursement> query =
-        reimbursementRepo
+        reimbursementRepository
             .all()
             .filter("self.statusSelect = :statusSelect AND self.company = :company");
     query.bind("statusSelect", ReimbursementRepository.STATUS_VALIDATED);
@@ -101,7 +98,7 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
       return;
     }
 
-    accountingBatch = Beans.get(AccountingBatchRepository.class).find(accountingBatch.getId());
+    accountingBatch = accountingBatchRepository.find(accountingBatch.getId());
 
     try {
       createBankOrder(accountingBatch, reimbursementList);
@@ -118,14 +115,11 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
    * @param reimbursementList
    * @return
    * @throws AxelorException
-   * @throws DatatypeConfigurationException
-   * @throws IOException
-   * @throws JAXBException
    */
   @Transactional(rollbackOn = {Exception.class})
   protected BankOrder createBankOrder(
       AccountingBatch accountingBatch, List<Reimbursement> reimbursementList)
-      throws AxelorException, JAXBException, IOException, DatatypeConfigurationException {
+      throws AxelorException {
     LocalDate bankOrderDate =
         accountingBatch.getDueDate() != null
             ? accountingBatch.getDueDate()
@@ -140,7 +134,9 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
             accountingBatch.getCompany().getCurrency(),
             null,
             null,
-            BankOrderRepository.TECHNICAL_ORIGIN_AUTOMATIC);
+            BankOrderRepository.TECHNICAL_ORIGIN_AUTOMATIC,
+            BankOrderRepository.FUNCTIONAL_ORIGIN_BATCH_PAYBACK,
+            PaymentModeRepository.ACCOUNTING_TRIGGER_IMMEDIATE);
 
     for (Reimbursement reimbursement : reimbursementList) {
       BankOrderLine bankOrderLine =
@@ -156,12 +152,11 @@ public class BatchCreditTransferPartnerReimbursementBankPayment
               reimbursement.getDescription(),
               reimbursement);
       bankOrder.addBankOrderLineListItem(bankOrderLine);
-      Beans.get(ReimbursementExportService.class)
-          .reimburse(reimbursement, accountingBatch.getCompany());
+      reimbursementExportService.reimburse(reimbursement, accountingBatch.getCompany());
     }
 
-    bankOrder = bankOrderRepo.save(bankOrder);
-    bankOrderService.confirm(bankOrder);
+    bankOrder = bankOrderRepository.save(bankOrder);
+    bankOrderValidationService.confirm(bankOrder);
     return bankOrder;
   }
 }

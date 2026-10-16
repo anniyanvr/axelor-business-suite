@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <object-views xmlns="http://axelor.com/xml/ns/object-views"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://axelor.com/xml/ns/object-views http://axelor.com/xml/ns/object-views/object-views_5.4.xsd">
+  xsi:schemaLocation="http://axelor.com/xml/ns/object-views https://axelor.com/xml/ns/object-views/object-views_8.2.xsd">
 
   <grid name="quality-alert-grid" title="Quality alerts"
     model="com.axelor.apps.quality.db.QualityAlert">
     <field name="reference" width="120"/>
     <field name="reference" width="120"/>
     <field name="product"/>
-    <field name="workCenter"/>
     <field name="team"/>
     <field name="responsible"/>
-    <field name="qualityTagSet"/>
+    <field name="tagSet"/>
     <field name="rootCause"/>
     <field name="prioritySelect" widget="single-select"/>
   </grid>
@@ -23,22 +22,23 @@
   </calendar>
 
   <form name="quality-alert-form" title="Quality alerts"
-    model="com.axelor.apps.quality.db.QualityAlert" onNew="action-quality-alert-record-default">
+    model="com.axelor.apps.quality.db.QualityAlert" onNew="action-quality-alert-record-default"
+    onSave="action-quality-validate-dates">
     <panel name="statusSelectPanel" title="Status">
       <field name="statusSelect" showTitle="false" widget="NavSelect" colSpan="12"/>
     </panel>
     <panel name="detailsPanel">
       <field name="reference"/>
       <field name="product" domain="self.dtype = 'Product'"/>
-      <field name="workCenter"/>
       <field name="team" domain="self.typeSelect = 'quality'"/>
       <field name="responsible"/>
       <field name="rootCause"/>
       <field name="prioritySelect" widget="single-select"/>
-      <field name="startDate"/>
-      <field name="endDate"/>
-      <field name="deadLineDate"/>
-      <field name="qualityTagSet" widget="TagSelect" x-color-field="colorSelect" colSpan="12"/>
+      <field name="startDate" onChange="action-quality-validate-start-date"/>
+      <field name="endDate" onChange="action-quality-validate-end-date"/>
+      <field name="deadLineDate" onChange="action-quality-validate-deadline-date"/>
+      <field name="tagSet" widget="Tags" x-color-field="color" grid-view="tag-simplified-grid"
+        form-view="tag-form" onSelect="action-quality-alert-attrs-set-quality-tag-domain"/>
     </panel>
     <panel name="descriptionPanel">
       <field name="description" colSpan="12" height="6" widget="html"/>
@@ -70,9 +70,11 @@
     <field name="responsible"/>
     <template>
             <![CDATA[
-            <h4>{{fullName}}</h4>
-            <div class="card-body">{{team.name}}</div>
-            <div class="card-body">{{responsible.name}}</div>
+            <>
+	            <strong>{fullName}</strong>
+	            <Box>{team.name}</Box>
+	            <Box>{responsible.name}</Box>
+            </>
     		]]>
     </template>
   </kanban>
@@ -102,12 +104,17 @@
 
   <search-filters name="quality-alert-filters"
     model="com.axelor.apps.quality.db.QualityAlert" title="Quality alert filters">
-    <filter title="My alerts">
+    <filter name="quality-alert-filters-my-alerts" title="My alerts">
       <domain>self.responsible.user.id = :_userId</domain>
     </filter>
-    <filter title="My team alerts">
+    <filter name="quality-alert-filters-my-team-alerts" title="My team alerts">
       <domain>self.team.id = :_myActiveTeamId</domain>
     </filter>
   </search-filters>
+
+  <action-attrs name="action-quality-alert-attrs-set-quality-tag-domain">
+    <attribute name="domain" for="tagSet"
+      expr="eval: &quot; (${__repo__(MetaModel).findByName('QualityAlert')?.id} IN (SELECT cm.id FROM self.concernedModelSet cm) OR self.concernedModelSet IS EMPTY) AND (:company IS NULL OR :company MEMBER OF self.companySet OR self.companySet IS EMPTY) AND (self.tradingNameSet IS EMPTY OR EXISTS(SELECT 1 FROM TradingName tn WHERE tn MEMBER OF self.tradingNameSet AND tn.id = ${__user__?.tradingName?.id ?: 0})) &quot;"/>
+  </action-attrs>
 
 </object-views>

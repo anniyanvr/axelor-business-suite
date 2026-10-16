@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,21 +14,21 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.hr.service.timesheet;
 
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Product;
+import com.axelor.apps.hr.db.Employee;
+import com.axelor.apps.hr.db.TSTimer;
 import com.axelor.apps.hr.db.Timesheet;
 import com.axelor.apps.hr.db.TimesheetLine;
 import com.axelor.apps.project.db.Project;
-import com.axelor.auth.db.User;
-import com.axelor.exception.AxelorException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
 
 public interface TimesheetLineService {
 
@@ -57,46 +58,11 @@ public interface TimesheetLineService {
       String timePref, BigDecimal duration, BigDecimal dailyWorkHrs, boolean toHours)
       throws AxelorException;
 
-  /**
-   * Creates a timesheet line.
-   *
-   * @param project
-   * @param product
-   * @param user
-   * @param date
-   * @param timesheet
-   * @param hours
-   * @param comments
-   * @return the created timesheet line.
-   */
-  TimesheetLine createTimesheetLine(
-      Project project,
-      Product product,
-      User user,
-      LocalDate date,
-      Timesheet timesheet,
-      BigDecimal hours,
-      String comments);
-
-  /**
-   * Creates a timesheet line without project and product. Used to generate timesheet lines for
-   * holidays or day leaves.
-   *
-   * @param user
-   * @param date
-   * @param timesheet
-   * @param hours
-   * @param comments
-   * @return the created timesheet line.
-   */
-  TimesheetLine createTimesheetLine(
-      User user, LocalDate date, Timesheet timesheet, BigDecimal hours, String comments);
-
   TimesheetLine updateTimesheetLine(
       TimesheetLine timesheetLine,
       Project project,
       Product product,
-      User user,
+      Employee employee,
       LocalDate date,
       Timesheet timesheet,
       BigDecimal hours,
@@ -111,12 +77,16 @@ public interface TimesheetLineService {
    */
   Duration computeTotalDuration(List<TimesheetLine> timesheetLineList);
 
-  /**
-   * Calculates time spent on the project base on timesheet lines for the validated {@link
-   * Timesheet}.
-   *
-   * @param timesheetLineList
-   * @return {@link Map}
-   */
-  Map<Project, BigDecimal> getProjectTimeSpentMap(List<TimesheetLine> timesheetLineList);
+  public void checkDailyLimit(
+      Timesheet timesheet, TimesheetLine currentTimesheetLine, BigDecimal hoursDuration)
+      throws AxelorException;
+
+  Integer getDailyLimitFromApp();
+
+  boolean isExceedingDailyLimit(
+      BigDecimal totalHoursDuration, BigDecimal hoursDuration, int dailyLimit);
+
+  Product getDefaultProduct(TimesheetLine timesheetLine);
+
+  void resetTimesheetLineTimer(TSTimer tsTimer);
 }

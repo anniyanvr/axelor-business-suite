@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,14 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.stock.service;
 
-import com.axelor.apps.base.db.Company;
+import com.axelor.apps.base.AxelorException;
 import com.axelor.apps.base.db.Product;
-import com.axelor.apps.base.db.Unit;
 import com.axelor.apps.base.db.repo.ProductRepository;
+import com.axelor.apps.base.db.repo.UnitRepository;
 import com.axelor.apps.base.service.UnitConversionService;
 import com.axelor.apps.base.service.app.AppBaseService;
 import com.axelor.apps.stock.db.StockConfig;
@@ -31,22 +32,24 @@ import com.axelor.apps.stock.db.repo.StockLocationLineRepository;
 import com.axelor.apps.stock.db.repo.StockLocationRepository;
 import com.axelor.apps.stock.db.repo.StockRulesRepository;
 import com.axelor.apps.stock.service.config.StockConfigService;
+import com.axelor.apps.stock.utils.StockLocationUtilsService;
 import com.axelor.db.JPA;
-import com.axelor.exception.AxelorException;
-import com.axelor.inject.Beans;
 import com.axelor.rpc.filter.Filter;
 import com.axelor.rpc.filter.JPQLFilter;
 import com.google.common.collect.Lists;
-import com.google.inject.Inject;
+import com.google.inject.persist.Transactional;
 import com.google.inject.servlet.RequestScoped;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import jakarta.inject.Inject;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import javax.persistence.Query;
 
 @RequestScoped
 public class StockLocationServiceImpl implements StockLocationService {
@@ -57,38 +60,39 @@ public class StockLocationServiceImpl implements StockLocationService {
 
   protected ProductRepository productRepo;
 
+  protected StockConfigService stockConfigService;
+  protected AppBaseService appBaseService;
+  protected UnitRepository unitRepository;
+  protected UnitConversionService unitConversionService;
+  protected StockLocationUtilsService stockLocationUtilsService;
+
+  protected final StockRulesRepository stockRulesRepository;
+  protected final StockLocationLineRepository stockLocationLineRepository;
+
   protected Set<Long> locationIdSet = new HashSet<>();
 
   @Inject
   public StockLocationServiceImpl(
       StockLocationRepository stockLocationRepo,
       StockLocationLineService stockLocationLineService,
-      ProductRepository productRepo) {
+      ProductRepository productRepo,
+      StockConfigService stockConfigService,
+      AppBaseService appBaseService,
+      UnitRepository unitRepository,
+      UnitConversionService unitConversionService,
+      StockLocationUtilsService stockLocationUtilsService,
+      StockRulesRepository stockRulesRepository,
+      StockLocationLineRepository stockLocationLineRepository) {
     this.stockLocationRepo = stockLocationRepo;
     this.stockLocationLineService = stockLocationLineService;
     this.productRepo = productRepo;
-  }
-
-  @Override
-  public StockLocation getDefaultReceiptStockLocation(Company company) {
-    try {
-      StockConfigService stockConfigService = Beans.get(StockConfigService.class);
-      StockConfig stockConfig = stockConfigService.getStockConfig(company);
-      return stockConfigService.getReceiptDefaultStockLocation(stockConfig);
-    } catch (Exception e) {
-      return null;
-    }
-  }
-
-  @Override
-  public StockLocation getPickupDefaultStockLocation(Company company) {
-    try {
-      StockConfigService stockConfigService = Beans.get(StockConfigService.class);
-      StockConfig stockConfig = stockConfigService.getStockConfig(company);
-      return stockConfigService.getPickupDefaultStockLocation(stockConfig);
-    } catch (Exception e) {
-      return null;
-    }
+    this.stockConfigService = stockConfigService;
+    this.appBaseService = appBaseService;
+    this.unitRepository = unitRepository;
+    this.unitConversionService = unitConversionService;
+    this.stockLocationUtilsService = stockLocationUtilsService;
+    this.stockRulesRepository = stockRulesRepository;
+    this.stockLocationLineRepository = stockLocationLineRepository;
   }
 
   protected List<StockLocation> getNonVirtualStockLocations(Long companyId) {
@@ -105,90 +109,31 @@ public class StockLocationServiceImpl implements StockLocationService {
   }
 
   @Override
-  public BigDecimal getQty(Long productId, Long locationId, Long companyId, String qtyType)
+  public Map<String, Object> getStockIndicators(Long productId, Long companyId, Long locationId)
       throws AxelorException {
-    if (productId != null) {
-      Product product = productRepo.find(productId);
-      Unit productUnit = product.getUnit();
-      UnitConversionService unitConversionService = Beans.get(UnitConversionService.class);
-      int scale = Beans.get(AppBaseService.class).getNbDecimalDigitForQty();
+    Map<String, Object> map = new HashMap<>();
 
-      if (locationId == null || locationId == 0L) {
-        List<StockLocation> stockLocations = getNonVirtualStockLocations(companyId);
-        if (!stockLocations.isEmpty()) {
-          BigDecimal qty = BigDecimal.ZERO;
-          for (StockLocation stockLocation : stockLocations) {
-            StockLocationLine stockLocationLine =
-                stockLocationLineService.getStockLocationLine(
-                    stockLocationRepo.find(stockLocation.getId()), productRepo.find(productId));
-
-            if (stockLocationLine != null) {
-              Unit stockLocationLineUnit = stockLocationLine.getUnit();
-              qty =
-                  qty.add(
-                      qtyType.equals("real")
-                          ? stockLocationLine.getCurrentQty()
-                          : stockLocationLine.getFutureQty());
-
-              if (productUnit != null && !productUnit.equals(stockLocationLineUnit)) {
-                qty =
-                    unitConversionService.convert(
-                        stockLocationLineUnit, productUnit, qty, qty.scale(), product);
-              }
-            }
-          }
-          return qty.setScale(scale, RoundingMode.HALF_UP);
-        }
-      } else {
-        StockLocationLine stockLocationLine =
-            stockLocationLineService.getStockLocationLine(
-                stockLocationRepo.find(locationId), productRepo.find(productId));
-
-        if (stockLocationLine != null) {
-          Unit stockLocationLineUnit = stockLocationLine.getUnit();
-          BigDecimal qty = BigDecimal.ZERO;
-
-          qty =
-              qtyType.equals("real")
-                  ? stockLocationLine.getCurrentQty()
-                  : stockLocationLine.getFutureQty();
-
-          if (productUnit != null && !productUnit.equals(stockLocationLineUnit)) {
-            qty =
-                unitConversionService.convert(
-                    stockLocationLineUnit, productUnit, qty, qty.scale(), product);
-          }
-          return qty.setScale(scale, RoundingMode.HALF_UP);
-        }
-      }
-    }
-
-    return BigDecimal.ZERO;
-  }
-
-  @Override
-  public BigDecimal getRealQty(Long productId, Long locationId, Long companyId)
-      throws AxelorException {
-    return getQty(productId, locationId, companyId, "real");
-  }
-
-  @Override
-  public BigDecimal getFutureQty(Long productId, Long locationId, Long companyId)
-      throws AxelorException {
-    return getQty(productId, locationId, companyId, "future");
+    List<Long> stockLocationIds = Collections.singletonList(locationId);
+    map.put(
+        "$realQty",
+        stockLocationUtilsService.getRealQtyOfProductInStockLocations(
+            productId, stockLocationIds, companyId));
+    map.put(
+        "$futureQty",
+        stockLocationUtilsService.getFutureQtyOfProductInStockLocations(
+            productId, stockLocationIds, companyId));
+    return map;
   }
 
   public List<Long> getBadStockLocationLineId() {
 
     List<StockLocationLine> stockLocationLineList =
-        Beans.get(StockLocationLineRepository.class)
+        stockLocationLineRepository
             .all()
             .filter("self.stockLocation.typeSelect = 1 OR self.stockLocation.typeSelect = 2")
             .fetch();
 
     List<Long> idList = new ArrayList<>();
-
-    StockRulesRepository stockRulesRepository = Beans.get(StockRulesRepository.class);
 
     for (StockLocationLine stockLocationLine : stockLocationLineList) {
       StockRules stockRules =
@@ -214,89 +159,78 @@ public class StockLocationServiceImpl implements StockLocationService {
 
   @Override
   public Set<Long> getContentStockLocationIds(StockLocation stockLocation) {
-    locationIdSet = new HashSet<>();
     if (stockLocation != null) {
-      List<StockLocation> stockLocations = getAllLocationAndSubLocation(stockLocation, true);
-      for (StockLocation item : stockLocations) {
-        locationIdSet.add(item.getId());
-      }
-    } else {
-      locationIdSet.add(0L);
+      return new HashSet<>(
+          getAllLocationAndSubLocation(
+              stockLocation.getId(), stockLocation.getIncludeVirtualSubLocation()));
     }
-
+    locationIdSet = new HashSet<>();
+    locationIdSet.add(0L);
     return locationIdSet;
+  }
+
+  @Override
+  public Set<StockLocation> getListOfStockLocationAndAllItsParentsStockLocations(
+      StockLocation stockLocation) {
+    Set<StockLocation> allStockLocations = new HashSet<>();
+    allStockLocations.add(stockLocation);
+    if (stockLocation == null) {
+      return allStockLocations;
+    }
+    StockLocation parentStockLocation = stockLocation.getParentStockLocation();
+    if (parentStockLocation == null) {
+      return allStockLocations;
+    }
+    while (allStockLocations.add(parentStockLocation)) {
+      parentStockLocation = parentStockLocation.getParentStockLocation();
+      if (parentStockLocation == null) {
+        break;
+      }
+    }
+    return allStockLocations;
   }
 
   public List<StockLocation> getAllLocationAndSubLocation(
       StockLocation stockLocation, boolean isVirtualInclude) {
 
-    List<StockLocation> resultList = new ArrayList<>();
     if (stockLocation == null) {
-      return resultList;
+      return new ArrayList<>();
     }
-    if (isVirtualInclude) {
-      for (StockLocation subLocation :
-          stockLocationRepo
-              .all()
-              .filter("self.parentStockLocation.id = :stockLocationId")
-              .bind("stockLocationId", stockLocation.getId())
-              .fetch()) {
 
-        resultList.addAll(this.getAllLocationAndSubLocation(subLocation, isVirtualInclude));
-      }
-    } else {
-      for (StockLocation subLocation :
-          stockLocationRepo
-              .all()
-              .filter(
-                  "self.parentStockLocation.id = :stockLocationId AND self.typeSelect != :virtual")
-              .bind("stockLocationId", stockLocation.getId())
-              .bind("virtual", StockLocationRepository.TYPE_VIRTUAL)
-              .fetch()) {
+    List<Long> ids = getAllLocationAndSubLocation(stockLocation.getId(), isVirtualInclude);
 
-        resultList.addAll(this.getAllLocationAndSubLocation(subLocation, isVirtualInclude));
-      }
+    if (ids.isEmpty()) {
+      return new ArrayList<>();
     }
-    resultList.add(stockLocation);
 
-    return resultList;
+    return stockLocationRepo.all().filter("self.id IN :ids").bind("ids", ids).fetch();
   }
 
-  @Override
-  public BigDecimal getStockLocationValue(StockLocation stockLocation) {
+  @SuppressWarnings("unchecked")
+  public List<Long> getAllLocationAndSubLocation(Long stockLocationId, boolean isVirtualInclude) {
 
-    Query query =
+    if (stockLocationId == null) {
+      return new ArrayList<>();
+    }
+
+    String sql =
+        "WITH RECURSIVE sublocs AS ("
+            + " SELECT id FROM stock_stock_location WHERE id = :stockLocationId"
+            + " UNION ALL"
+            + " SELECT s.id FROM stock_stock_location s"
+            + " JOIN sublocs ON s.parent_stock_location = sublocs.id"
+            + (isVirtualInclude
+                ? ""
+                : " WHERE s.type_select != " + StockLocationRepository.TYPE_VIRTUAL)
+            + ") SELECT id FROM sublocs";
+
+    List<Number> result =
         JPA.em()
-            .createQuery(
-                "SELECT SUM( self.currentQty * CASE WHEN (location.company.stockConfig.stockValuationTypeSelect = 1) THEN "
-                    + "(self.avgPrice)  WHEN (location.company.stockConfig.stockValuationTypeSelect = 2) THEN "
-                    + "CASE WHEN (self.product.costTypeSelect = 3) THEN (self.avgPrice) ELSE (self.product.costPrice) END "
-                    + "WHEN (location.company.stockConfig.stockValuationTypeSelect = 3) THEN (self.product.salePrice) "
-                    + "WHEN (location.company.stockConfig.stockValuationTypeSelect = 4) THEN (self.product.purchasePrice) "
-                    + "ELSE (self.avgPrice) END ) AS value "
-                    + "FROM StockLocationLine AS self "
-                    + "LEFT JOIN StockLocation AS location "
-                    + "ON location.id= self.stockLocation "
-                    + "WHERE self.stockLocation.id =:id");
-    query.setParameter("id", stockLocation.getId());
+            .createNativeQuery(sql)
+            .setParameter("stockLocationId", stockLocationId)
+            .getResultList();
 
-    List<?> result = query.getResultList();
-    return (result.get(0) == null || ((BigDecimal) result.get(0)).signum() == 0)
-        ? BigDecimal.ZERO
-        : ((BigDecimal) result.get(0)).setScale(2, BigDecimal.ROUND_HALF_UP);
-  }
-
-  @Override
-  public List<Long> getAllLocationAndSubLocationId(
-      StockLocation stockLocation, boolean isVirtualInclude) {
-    List<StockLocation> stockLocationList =
-        getAllLocationAndSubLocation(stockLocation, isVirtualInclude);
-    List<Long> stockLocationListId = null;
-    if (stockLocationList != null) {
-      stockLocationListId =
-          stockLocationList.stream().map(StockLocation::getId).collect(Collectors.toList());
-    }
-    return stockLocationListId;
+    return result.stream().map(Number::longValue).collect(Collectors.toList());
   }
 
   @Override
@@ -309,5 +243,35 @@ public class StockLocationServiceImpl implements StockLocationService {
                     && !stockConfig.getIsDisplayAgPriceInPrinting()
                     && !stockConfig.getIsDisplaySaleValueInPrinting())
                 && !stockConfig.getIsDisplayPurchaseValueInPrinting());
+  }
+
+  @Override
+  @Transactional
+  public void changeProductLocker(StockLocation stockLocation, Product product, String newLocker) {
+    Optional.ofNullable(
+            stockLocationLineRepository
+                .all()
+                .filter("self.product = :product AND self.stockLocation = :stockLocation")
+                .bind("product", product)
+                .bind("stockLocation", stockLocation)
+                .fetchOne())
+        .ifPresent(sml -> sml.setRack(newLocker));
+  }
+
+  @Override
+  public Set<Long> getLocationAndAllParentLocationsIdsOrderedFromTheClosestToTheFurthest(
+      StockLocation stockLocation) {
+    Set<Long> resultSet = new LinkedHashSet<>();
+    if (stockLocation == null) {
+      return resultSet;
+    }
+    resultSet.add(stockLocation.getId());
+    StockLocation parentStockLocation = stockLocation.getParentStockLocation();
+    /* Adding to the set returns false if the value already exists, in our case this could be a good
+    way to prevent an infinite loop */
+    while (parentStockLocation != null && resultSet.add(parentStockLocation.getId())) {
+      parentStockLocation = parentStockLocation.getParentStockLocation();
+    }
+    return resultSet;
   }
 }

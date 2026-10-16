@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.maintenance.module;
 
@@ -22,16 +23,39 @@ import com.axelor.apps.maintenance.db.repo.EquipementMaintenanceRepo;
 import com.axelor.apps.maintenance.db.repo.EquipementMaintenanceRepository;
 import com.axelor.apps.maintenance.db.repo.MaintenanceRequestRepo;
 import com.axelor.apps.maintenance.db.repo.MaintenanceRequestRepository;
+import com.axelor.apps.maintenance.service.BillOfMaterialComputeNameServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.BillOfMaterialMaintenanceService;
 import com.axelor.apps.maintenance.service.BillOfMaterialServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.CostSheetServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.MaintenanceRequestCreateService;
+import com.axelor.apps.maintenance.service.MaintenanceRequestCreateServiceImpl;
+import com.axelor.apps.maintenance.service.MaintenanceRequestInitValueService;
+import com.axelor.apps.maintenance.service.MaintenanceRequestInitValueServiceImpl;
 import com.axelor.apps.maintenance.service.MaintenanceRequestService;
 import com.axelor.apps.maintenance.service.MaintenanceRequestServiceImpl;
-import com.axelor.apps.maintenance.service.ManufOrderPrintServiceMaintenanceImpl;
-import com.axelor.apps.maintenance.service.ManufOrderWorkFlowMaintenanceService;
-import com.axelor.apps.maintenance.service.ProdProcessMaintenanceService;
+import com.axelor.apps.maintenance.service.ManufOrderPlanServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.ManufOrderPrintService;
+import com.axelor.apps.maintenance.service.ManufOrderPrintServiceImpl;
+import com.axelor.apps.maintenance.service.ManufOrderStockMoveServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.ManufOrderWorkflowMaintenanceServiceImpl;
+import com.axelor.apps.maintenance.service.MrpServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.OperationOrderStockMoveServiceMaintenanceImpl;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceCriterionService;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceCriterionServiceImpl;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceEligibilityService;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceEligibilityServiceImpl;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceProcessService;
+import com.axelor.apps.maintenance.service.PreventiveMaintenanceProcessServiceImpl;
+import com.axelor.apps.maintenance.service.batch.ProductionBatchMaintenanceService;
+import com.axelor.apps.production.service.BillOfMaterialComputeNameServiceImpl;
 import com.axelor.apps.production.service.BillOfMaterialServiceImpl;
-import com.axelor.apps.production.service.ProdProcessService;
-import com.axelor.apps.production.service.manuforder.ManufOrderPrintServiceImpl;
-import com.axelor.apps.production.service.manuforder.ManufOrderWorkflowService;
+import com.axelor.apps.production.service.MrpServiceProductionImpl;
+import com.axelor.apps.production.service.batch.ProductionBatchService;
+import com.axelor.apps.production.service.costsheet.CostSheetServiceImpl;
+import com.axelor.apps.production.service.manuforder.ManufOrderPlanServiceImpl;
+import com.axelor.apps.production.service.manuforder.ManufOrderStockMoveServiceImpl;
+import com.axelor.apps.production.service.manuforder.ManufOrderWorkflowServiceImpl;
+import com.axelor.apps.production.service.operationorder.OperationOrderStockMoveServiceImpl;
 
 public class MaintenanceModule extends AxelorModule {
 
@@ -41,9 +65,30 @@ public class MaintenanceModule extends AxelorModule {
     bind(EquipementMaintenanceRepository.class).to(EquipementMaintenanceRepo.class);
     bind(MaintenanceRequestService.class).to(MaintenanceRequestServiceImpl.class);
     bind(MaintenanceRequestRepository.class).to(MaintenanceRequestRepo.class);
+    bind(BillOfMaterialMaintenanceService.class).to(BillOfMaterialServiceMaintenanceImpl.class);
     bind(BillOfMaterialServiceImpl.class).to(BillOfMaterialServiceMaintenanceImpl.class);
-    bind(ManufOrderWorkflowService.class).to(ManufOrderWorkFlowMaintenanceService.class);
-    bind(ManufOrderPrintServiceImpl.class).to(ManufOrderPrintServiceMaintenanceImpl.class);
-    bind(ProdProcessService.class).to(ProdProcessMaintenanceService.class);
+    bind(ManufOrderWorkflowServiceImpl.class).to(ManufOrderWorkflowMaintenanceServiceImpl.class);
+    bind(ManufOrderPrintService.class).to(ManufOrderPrintServiceImpl.class);
+    bind(BillOfMaterialComputeNameServiceImpl.class)
+        .to(BillOfMaterialComputeNameServiceMaintenanceImpl.class);
+    bind(ManufOrderPlanServiceImpl.class).to(ManufOrderPlanServiceMaintenanceImpl.class);
+    bind(MaintenanceRequestInitValueService.class).to(MaintenanceRequestInitValueServiceImpl.class);
+    bind(MaintenanceRequestCreateService.class).to(MaintenanceRequestCreateServiceImpl.class);
+    bind(ProductionBatchService.class).to(ProductionBatchMaintenanceService.class);
+    bind(PreventiveMaintenanceEligibilityService.class)
+        .to(PreventiveMaintenanceEligibilityServiceImpl.class);
+    bind(PreventiveMaintenanceCriterionService.class)
+        .to(PreventiveMaintenanceCriterionServiceImpl.class);
+    bind(PreventiveMaintenanceProcessService.class)
+        .to(PreventiveMaintenanceProcessServiceImpl.class);
+
+    // Maintenance stock move and cost sheet overrides
+    bind(CostSheetServiceImpl.class).to(CostSheetServiceMaintenanceImpl.class);
+    bind(ManufOrderStockMoveServiceImpl.class).to(ManufOrderStockMoveServiceMaintenanceImpl.class);
+    bind(OperationOrderStockMoveServiceImpl.class)
+        .to(OperationOrderStockMoveServiceMaintenanceImpl.class);
+
+    // RM#109711: include maintenance orders in MRP calculation
+    bind(MrpServiceProductionImpl.class).to(MrpServiceMaintenanceImpl.class);
   }
 }

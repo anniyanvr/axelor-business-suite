@@ -1,11 +1,12 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ * Copyright (C) 2005-2026 Axelor (<http://axelor.com>).
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,24 +14,40 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package com.axelor.apps.hr.db.repo;
 
 import com.axelor.apps.base.db.Partner;
 import com.axelor.apps.base.db.repo.PartnerBaseRepository;
+import com.axelor.apps.base.db.repo.PartnerRepository;
 import com.axelor.apps.base.service.PartnerService;
 import com.axelor.apps.base.service.app.AppBaseService;
 import com.axelor.apps.hr.db.Employee;
 import com.axelor.apps.hr.db.EmploymentContract;
+import com.axelor.apps.hr.service.EmployeeComputeStatusService;
+import com.axelor.apps.hr.service.PartnerEmployeeService;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
 import com.axelor.inject.Beans;
+import com.google.common.base.Strings;
+import jakarta.inject.Inject;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 public class EmployeeHRRepository extends EmployeeRepository {
+
+  protected final PartnerRepository partnerRepository;
+  protected final PartnerEmployeeService partnerEmployeeService;
+
+  @Inject
+  public EmployeeHRRepository(
+      PartnerRepository partnerRepository, PartnerEmployeeService partnerEmployeeService) {
+    this.partnerRepository = partnerRepository;
+    this.partnerEmployeeService = partnerEmployeeService;
+  }
 
   @Override
   public Map<String, Object> populate(Map<String, Object> json, Map<String, Object> context) {
@@ -38,22 +55,9 @@ public class EmployeeHRRepository extends EmployeeRepository {
       Long id = (Long) json.get("id");
       if (id != null) {
         Employee employee = super.find(id);
-        AppBaseService appBaseService = Beans.get(AppBaseService.class);
-        LocalDate today =
-            appBaseService.getTodayDate(
-                employee.getUser() != null
-                    ? employee.getUser().getActiveCompany()
-                    : AuthUtils.getUser().getActiveCompany());
-        if (employee.getLeavingDate() == null
-            && employee.getHireDate() != null
-            && employee.getHireDate().compareTo(today.minusDays(30)) > 0) {
-          json.put("$employeeStatus", "new");
-        } else if (employee.getLeavingDate() != null
-            && employee.getLeavingDate().compareTo(today) < 0) {
-          json.put("$employeeStatus", "former");
-        } else {
-          json.put("$employeeStatus", "active");
-        }
+        json.put(
+            "$employeeStatus",
+            Beans.get(EmployeeComputeStatusService.class).getEmployeeStatus(employee));
       }
     }
     return super.populate(json, context);
@@ -62,18 +66,26 @@ public class EmployeeHRRepository extends EmployeeRepository {
   @Override
   public Employee save(Employee entity) {
     Partner partner = entity.getContactPartner();
-    if (!partner.getIsContact() && partner.getPartnerTypeSelect() == 0) {
-      partner.setIsContact(true);
-      partner.setIsEmployee(true);
-      Beans.get(PartnerHRRepository.class).save(partner);
-    } else {
+    if (Strings.isNullOrEmpty(partner.getFullName())
+        || Strings.isNullOrEmpty(partner.getSimpleFullName())) {
       Beans.get(PartnerService.class).setPartnerFullName(partner);
     }
-
     EmploymentContract employmentContract = entity.getMainEmploymentContract();
+    if (partner.getCompanySet() == null || partner.getCompanySet().isEmpty()) {
+      if (employmentContract != null) {
+        partner.addCompanySetItem(employmentContract.getPayCompany());
+      } else {
+        Optional.ofNullable(AuthUtils.getUser())
+            .map(User::getActiveCompany)
+            .ifPresent(partner::addCompanySetItem);
+      }
+    }
+
     if (employmentContract != null && employmentContract.getEmployee() == null) {
       employmentContract.setEmployee(entity);
     }
+
+    partnerEmployeeService.editPartner(entity);
 
     return super.save(entity);
   }
@@ -122,6 +134,7 @@ public class EmployeeHRRepository extends EmployeeRepository {
       Partner partner = partnerRepo.find(employee.getContactPartner().getId());
       if (partner != null) {
         partner.setEmployee(null);
+        employee.setContactPartner(partner);
         partnerRepo.save(partner);
       }
     }
@@ -156,7 +169,9 @@ public class EmployeeHRRepository extends EmployeeRepository {
         appBaseService.getTodayDate(
             employee.getUser() != null
                 ? employee.getUser().getActiveCompany()
-                : AuthUtils.getUser().getActiveCompany());
+                : Optional.ofNullable(AuthUtils.getUser())
+                    .map(User::getActiveCompany)
+                    .orElse(null));
     return isEmployeeFormerNewOrArchived(employee, today);
   }
 }
